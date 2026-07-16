@@ -1,0 +1,137 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Firestore security rules — BarHop (B2B Creator webapp + Consumer mobile app).
+//
+// ⚠️  These live in the shared Firebase project (barhop-creator-webapp-ee9a8).
+// Deploy from the Creator webapp repo or paste into Firebase console →
+// Firestore → Rules. Blocks marked "MOBILE APP" are what the consumer app
+// needs; without them every swipe fails with "permission-denied" and the B2B
+// dashboard never receives analytics.
+// ─────────────────────────────────────────────────────────────────────────────
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =========================================================
+    // HELPER FUNCTIONS
+    // =========================================================
+    // Checks if the logged-in user is the owner of the specified venue
+    function isVenueOwner(venueId) {
+      return get(/databases/$(database)/documents/venues/$(venueId)).data.ownerId == request.auth.uid;
+    }
+
+    // =========================================================
+    // USERS COLLECTION
+    // =========================================================
+    match /users/{userId} {
+      // A user must be logged in, and their UID must perfectly match the document ID.
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+
+      // --- MOBILE APP: SWIPE HISTORY SUBCOLLECTION ---
+      // Subcollection rules do NOT inherit from the parent match, so this is
+      // required. The consumer app writes one doc per swiped venue here and
+      // reads the collection on launch to filter the deck.
+      match /swipedVenues/{venueId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+
+    // =========================================================
+    // VENUES COLLECTION & B2B SUBCOLLECTIONS
+    // =========================================================
+    match /venues/{venueId} {
+
+      // --- CORE VENUE DOCUMENT ---
+      // MOBILE APP: consumers may READ venues that are published; owners keep
+      // full read access. The app's query filters where('published','==',true),
+      // which this rule permits.
+      allow read: if request.auth != null
+        && (resource.data.ownerId == request.auth.uid || resource.data.published == true);
+
+      // Owners can update/delete only venues they own.
+      allow update, delete: if request.auth != null && resource.data.ownerId == request.auth.uid;
+      // Users can only create a venue if they set themselves as the owner.
+      allow create: if request.auth != null && request.resource.data.ownerId == request.auth.uid;
+
+      // --- VIP RESERVATIONS SUBCOLLECTION ---
+      match /reservations/{reservationId} {
+        // Read/Write allowed ONLY if the requester owns the parent venue
+        allow read, write: if request.auth != null && isVenueOwner(venueId);
+      }
+
+      // --- STAFF & PAYOUTS SUBCOLLECTION ---
+      match /staff/{staffId} {
+        // Read/Write allowed ONLY if the requester owns the parent venue
+        allow read, write: if request.auth != null && isVenueOwner(venueId);
+      }
+
+      // --- ANALYTICS SUBCOLLECTION (daily swipe logs) ---
+      match /analytics/{analyticsId} {
+        // Owner (B2B dashboard): full access — reads every field, writes
+        // matchRate / clickThroughs / etc.
+        allow read, write: if request.auth != null && isVenueOwner(venueId);
+
+        // MOBILE APP: a signed-in consumer may record a swipe by CREATING
+        // today's counter doc — only the three counter fields, exactly one
+        // swipe's worth (swipedRight + swipedLeft == 1).
+        allow create: if request.auth != null
+          && request.resource.data.keys().hasOnly(['date', 'swipedRight', 'swipedLeft'])
+          && request.resource.data.date is timestamp
+          && request.resource.data.get('swipedRight', 0) is int
+          && request.resource.data.get('swipedLeft', 0) is int
+          && request.resource.data.get('swipedRight', 0) >= 0
+          && request.resource.data.get('swipedLeft', 0) >= 0
+          && request.resource.data.get('swipedRight', 0)
+             + request.resource.data.get('swipedLeft', 0) == 1;
+
+        // …or bumping the counters on an existing doc, one swipe at a time,
+        //    without touching any owner-written fields and never decreasing.
+        allow update: if request.auth != null
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['date', 'swipedRight', 'swipedLeft'])
+          && request.resource.data.get('swipedRight', 0) >= resource.data.get('swipedRight', 0)
+          && request.resource.data.get('swipedLeft', 0) >= resource.data.get('swipedLeft', 0)
+          && (request.resource.data.get('swipedRight', 0) - resource.data.get('swipedRight', 0))
+             + (request.resource.data.get('swipedLeft', 0) - resource.data.get('swipedLeft', 0)) == 1;
+      }
+    }
+
+    // =========================================================
+    // SQUADS (mobile app group swipe sessions)
+    // =========================================================
+    // Any signed-in user can look a squad up by PIN (that IS the invite
+    // mechanism) and update it (joining adds yourself; right-swipes append to
+    // the likes map). Post-MVP hardening: restrict updates to self-joins and
+    // member-only like-writes via request.resource.data.diff().
+    match /squads/{squadId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.data.hostId == request.auth.uid;
+      // Server-side member caps per squad tier (free ≤ 3, pro ≤ 7, elite
+      // uncapped) — holds even if a client bypasses the app's checks.
+      allow update: if request.auth != null
+        && (
+          request.resource.data.get('tier', 'free') == 'elite'
+          || (request.resource.data.get('tier', 'free') == 'pro'
+              && request.resource.data.members.size() <= 7)
+          || (request.resource.data.get('tier', 'free') == 'free'
+              && request.resource.data.members.size() <= 3)
+        );
+      // no delete — squads end via isActive: false
+    }
+
+    // =========================================================
+    // ITINERARIES (mobile app night-out planner)
+    // =========================================================
+    // One plan per identity — the doc ID is the user's uid (solo plan) or a
+    // squadId (shared squad plan, accessible to every current member).
+    match /itineraries/{itineraryId} {
+      allow read, write: if request.auth != null && (
+        itineraryId == request.auth.uid ||
+        (exists(/databases/$(database)/documents/squads/$(itineraryId)) &&
+         request.auth.uid in get(/databases/$(database)/documents/squads/$(itineraryId)).data.members)
+      );
+    }
+
+  }
+}

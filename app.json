@@ -45,7 +45,8 @@
           "iosAppId": "ca-app-pub-3940256099942544~1458002511"
         }
       ],
-      "./plugins/withGoogleAdsKotlinFix"
+      "./plugins/withGoogleAdsKotlinFix",
+      "expo-font"
     ],
     "extra": {
       "eas": {

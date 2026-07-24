@@ -32,6 +32,17 @@ function openUrl(url: string) {
   );
 }
 
+// Creator-webapp signup, used by the claim CTA on auto-created venue cards.
+// The Foursquare place ID rides along so the owner lands on signup with their
+// venue already selected instead of searching for their own bar. Unset ⇒ the
+// CTA is hidden rather than opening a broken link.
+const CLAIM_BASE_URL = process.env.EXPO_PUBLIC_CREATOR_CLAIM_URL;
+
+function claimUrl(placeId: string): string | null {
+  if (!CLAIM_BASE_URL) return null;
+  return `${CLAIM_BASE_URL}${CLAIM_BASE_URL.includes('?') ? '&' : '?'}fsq=${encodeURIComponent(placeId)}`;
+}
+
 /** Normalizes a stored social value (full URL or bare handle) into a URL. */
 function socialUrl(value: string, base: string): string {
   return /^https?:\/\//i.test(value) ? value : `${base}${value.replace(/^@/, '')}`;
@@ -127,6 +138,34 @@ export default function VenueDetailsSheet({ venue, onClose }: VenueDetailsSheetP
               </View>
 
               {venue.tagline ? <Text style={styles.tagline}>“{venue.tagline}”</Text> : null}
+
+              {/* Auto-created listing with no owner yet — the claim funnel.
+                  Framed as the upside an owner is missing (photos, hours,
+                  offers), not as a knock on the venue: these are real named
+                  businesses that never opted in, and the contrast with a
+                  fully-built claimed card is motivation enough. */}
+              {venue.autoCreated && claimUrl(venue.placeId) ? (
+                <View style={styles.claimCard}>
+                  <View style={styles.claimHeaderRow}>
+                    <Ionicons name="sparkles-outline" size={16} color={colors.primary} />
+                    <Text style={styles.claimTitle}>This venue hasn’t been claimed</Text>
+                  </View>
+                  <Text style={styles.claimBody}>
+                    Listing auto-generated from public place data. The owner can add photos,
+                    trading hours, offers and a custom card.
+                  </Text>
+                  <Pressable
+                    style={styles.claimButton}
+                    onPress={() => {
+                      const url = claimUrl(venue.placeId);
+                      if (url) openUrl(url);
+                    }}
+                  >
+                    <Text style={styles.claimButtonText}>Own this business? Claim it</Text>
+                    <Ionicons name="arrow-forward" size={16} color="#FFFFFF" />
+                  </Pressable>
+                </View>
+              ) : null}
 
               <Section title="Description" styles={styles}>
                 <Text style={styles.bodyText}>
@@ -321,6 +360,31 @@ const createStyles = (colors: ThemeColors) =>
       marginTop: 14,
       lineHeight: 21,
     },
+
+    claimCard: {
+      marginTop: 18,
+      padding: 14,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderStyle: 'dashed',
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      gap: 8,
+    },
+    claimHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+    claimTitle: { color: colors.text, fontSize: 15, fontWeight: '700' },
+    claimBody: { color: colors.textMuted, fontSize: 13, lineHeight: 19 },
+    claimButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      marginTop: 4,
+      paddingVertical: 11,
+      borderRadius: 999,
+      backgroundColor: colors.primary,
+    },
+    claimButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
 
     section: { marginTop: 26 },
     sectionTitle: {

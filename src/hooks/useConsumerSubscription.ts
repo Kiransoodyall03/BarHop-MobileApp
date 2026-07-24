@@ -7,7 +7,10 @@
 // (trial/starter/pro/enterprise) that venue owners carry on the same user
 // documents — the two billing systems never touch each other's fields.
 
+import { useSyncExternalStore } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { getEntitlementSnapshot, subscribeToEntitlement } from '../services/purchasesModule';
+import { isFuture } from '../utils/timestamps';
 import type { ConsumerTier } from '../types';
 
 export interface TierLimits {
@@ -53,7 +56,23 @@ export interface ConsumerSubscription extends TierLimits {
 
 export function useConsumerSubscription(): ConsumerSubscription {
   const { profile } = useAuth();
-  const tier: ConsumerTier = profile?.consumerTier ?? 'free';
+
+  // users/{uid}.consumerTier is the authoritative tier — written ONLY by the
+  // RevenueCat webhook (clients can't set it; see firestore.rules). But that
+  // write lands a beat after payment, so a live local entitlement promotes a
+  // 'free' profile to Pro immediately. Deliberately one-directional: it can
+  // upgrade, never downgrade, so it can't strip access from an 'elite' user or
+  // fight the server's view.
+  const storedTier: ConsumerTier = profile?.consumerTier ?? 'free';
+  const hasLocalPro = useSyncExternalStore(subscribeToEntitlement, getEntitlementSnapshot);
+
+  // A redeemed voucher grants Pro until proGrantExpiresAt. Checked live rather
+  // than trusting a swept flag, so access ends the moment it lapses even if the
+  // nightly expiry sweep hasn't run yet.
+  const hasVoucherPro = isFuture(profile?.proGrantExpiresAt);
+
+  const tier: ConsumerTier =
+    storedTier === 'free' && (hasLocalPro || hasVoucherPro) ? 'pro' : storedTier;
   const limits = limitsForTier(tier);
   const isPro = tier === 'pro' || tier === 'elite';
 

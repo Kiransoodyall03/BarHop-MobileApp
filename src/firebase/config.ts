@@ -1,6 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import * as firebaseAuth from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
+import { getFunctions } from 'firebase/functions';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Same Firebase project as the B2B Creator webapp — both apps share the
@@ -28,3 +29,8 @@ export const auth = firebaseAuth.initializeAuth(app, {
 });
 
 export const db = getFirestore(app);
+
+// Callable Cloud Functions (voucher redemption). Region must match the
+// functions' deployment region in the Creator webapp repo — Firebase defaults
+// to us-central1, and a mismatch fails with a confusing "not-found".
+export const functions = getFunctions(app);

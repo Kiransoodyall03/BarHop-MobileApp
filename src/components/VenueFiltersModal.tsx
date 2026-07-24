@@ -181,7 +181,11 @@ export default function VenueFiltersModal({
         title="Unlock Pro Filters"
         message="Filter by music genre, dress code and cover charge with BarHop Pro."
         ctaLabel={upgradeCtaLabel}
+        source="filters"
         onClose={() => setUpsellVisible(false)}
+        // This upsell lives inside the filters <Modal> — that sheet must close
+        // too, or it covers the Paywall.
+        onDismissParent={onClose}
       />
     </Modal>
   );

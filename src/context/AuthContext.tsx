@@ -7,6 +7,7 @@ import React, {
 } from 'react';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { auth } from '../firebase/config';
+import { initPurchases, resetPurchasesUser } from '../services/purchasesModule';
 import { subscribeToProfile } from '../services/profileService';
 import type { ConsumerProfile } from '../types';
 
@@ -41,6 +42,11 @@ export function AuthProvider({ children }: PropsWithChildren) {
       onAuthStateChanged(auth, (nextUser) => {
         setUser(nextUser);
         setInitializing(false);
+        // Bind RevenueCat to the Firebase uid — that binding is what lets the
+        // webhook map a purchase back to users/{uid}. No-op where billing is
+        // unconfigured or unsupported (Expo Go).
+        if (nextUser) initPurchases(nextUser.uid);
+        else resetPurchasesUser();
       }),
     []
   );

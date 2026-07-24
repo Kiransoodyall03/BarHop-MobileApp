@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Modal,
   Pressable,
   StyleSheet,
@@ -9,10 +8,13 @@ import {
   View,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import { adsModule, adsSupported, REWARDED_AD_UNIT_ID } from './adsModule';
 import { useTheme, useThemedStyles } from '../theme/ThemeContext';
 import type { ThemeColors } from '../theme/colors';
+import type { RootStackParamList } from '../navigation/AppNavigator';
 
 // Guarded at module scope: null in Expo Go, real hook in dev builds. The
 // component that calls it is only mounted when adsSupported is true.
@@ -35,12 +37,12 @@ export default function OutOfSwipesModal({
 }: OutOfSwipesModalProps) {
   const styles = useThemedStyles(createStyles);
   const { colors } = useTheme();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
   function handleUpgradePress() {
-    Alert.alert(
-      'BarHop Pro is coming soon 🥂',
-      'Unlimited swipes, no ads, and first dibs on the hottest venues. Watch this space.'
-    );
+    // Dismiss first — this modal would otherwise cover the pushed Paywall.
+    onClose();
+    navigation.navigate('Paywall', { source: 'out-of-swipes' });
   }
 
   return (

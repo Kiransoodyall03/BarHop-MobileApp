@@ -8,6 +8,7 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
+import { isStubVenueId } from './districtService';
 import type { SwipeDirection } from '../types';
 
 /**
@@ -24,6 +25,9 @@ import type { SwipeDirection } from '../types';
  *    the dashboard calls .toDate() on it. The deterministic day-keyed doc ID
  *    plus set(..., { merge: true }) with increment() makes the write an
  *    upsert that is safe under concurrent swipes from many users.
+ *
+ * Auto-created stubs skip step 2 — see skipAnalytics below. Personal swipe
+ * history is still recorded, so a stub is never shown twice.
  */
 export async function recordSwipe(
   userId: string,
@@ -42,17 +46,34 @@ export async function recordSwipe(
     swipedAt: serverTimestamp(),
   });
 
-  batch.set(
-    doc(db, 'venues', venueId, 'analytics', dayKey),
-    {
-      date: Timestamp.fromDate(localMidnight),
-      swipedRight: increment(direction === 'right' ? 1 : 0),
-      swipedLeft: increment(direction === 'left' ? 1 : 0),
-    },
-    { merge: true }
-  );
+  if (!skipAnalytics(venueId)) {
+    batch.set(
+      doc(db, 'venues', venueId, 'analytics', dayKey),
+      {
+        date: Timestamp.fromDate(localMidnight),
+        swipedRight: increment(direction === 'right' ? 1 : 0),
+        swipedLeft: increment(direction === 'left' ? 1 : 0),
+      },
+      { merge: true }
+    );
+  }
 
   await batch.commit();
+}
+
+/**
+ * Auto-created stubs have no venues/{id} document and no owner, so there is no
+ * B2B dashboard to report to.
+ *
+ * This guard is load-bearing, not cosmetic: Firestore happily creates a
+ * subcollection under a MISSING parent document, and the analytics `create`
+ * rule intentionally doesn't check venue ownership (any signed-in consumer may
+ * log a swipe). An unguarded write would therefore SUCCEED and litter the
+ * venues collection with phantom venues/{stubId}/analytics paths that no
+ * dashboard ever reads. Analytics start when an owner claims the venue.
+ */
+function skipAnalytics(venueId: string): boolean {
+  return isStubVenueId(venueId);
 }
 
 /**
@@ -65,6 +86,7 @@ export async function recordSquadSwipeActivity(
   venueId: string,
   direction: SwipeDirection
 ): Promise<void> {
+  if (skipAnalytics(venueId)) return;
   const now = new Date();
   const localMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   await setDoc(

@@ -9,6 +9,7 @@ import {
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useAuth } from '../context/AuthContext';
 import AuthScreen from '../screens/AuthScreen';
+import PaywallScreen from '../screens/PaywallScreen';
 import OnboardingNavigator from './OnboardingNavigator';
 import MainTabs from './MainTabs';
 import { useTheme, useThemedStyles } from '../theme/ThemeContext';
@@ -18,6 +19,9 @@ export type RootStackParamList = {
   Auth: undefined;
   Onboarding: undefined;
   Main: undefined;
+  // `source` records which upsell surface opened the paywall — useful for
+  // conversion attribution later; nothing reads it yet.
+  Paywall: { source?: string } | undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -58,7 +62,16 @@ export default function AppNavigator() {
         ) : needsOnboarding ? (
           <Stack.Screen name="Onboarding" component={OnboardingNavigator} />
         ) : (
-          <Stack.Screen name="Main" component={MainTabs} />
+          <>
+            <Stack.Screen name="Main" component={MainTabs} />
+            {/* Root-level so every tab and modal can reach it via
+                navigation.navigate('Paywall') — React Navigation walks up. */}
+            <Stack.Screen
+              name="Paywall"
+              component={PaywallScreen}
+              options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+            />
+          </>
         )}
       </Stack.Navigator>
     </NavigationContainer>

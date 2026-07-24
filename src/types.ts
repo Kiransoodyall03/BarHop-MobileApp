@@ -79,6 +79,11 @@ export interface Venue {
 // is what the B2B dashboard keys analytics on (venues/{id}/analytics).
 export interface VenueWithId extends Venue {
   id: string;
+  // True for auto-created stubs from the district cache — venues NOBODY owns
+  // yet (see DistrictSnapshot). There is no venues/{id} document behind these,
+  // so analytics writes must be skipped and the card shows an "unclaimed"
+  // affordance. Absent/false ⇒ a real owner-created venue document.
+  autoCreated?: boolean;
 }
 
 export type SwipeDirection = 'left' | 'right';
@@ -95,6 +100,61 @@ export interface SwipeRecord {
   venueId: string;
   direction: SwipeDirection;
   swipedAt: FirestoreTimestamp | Date;
+}
+
+// ── District venue cache (auto-created cards) ────────────────────────────────
+//
+// The deck is empty in any area where no owner has built a card yet. A daily
+// Cloud Function (refreshDistrictVenues, in the Creator webapp repo) calls
+// Foursquare ONCE per curated district and writes the result here, so every
+// user in that district reads one shared document instead of making their own
+// API call. 1 000 users in a district ⇒ 1 API call, not 1 000.
+//
+// Only Foursquare PRO (default) fields are stored. Photos/tips/hours/ratings
+// are Premium — billed from the first call with no free allowance — so stubs
+// deliberately carry no images and no hours. The card already handles that
+// state (🍸 fallback + "Hours TBD"). Media arrives when an owner claims the
+// venue in the Creator webapp, which is the incentive to claim.
+
+// A lean auto-created venue. Deliberately NOT a full Venue: snapshots hold
+// dozens of these and must stay well inside Firestore's 1 MiB document limit.
+export interface StubVenue {
+  placeId: string; // Foursquare fsq_place_id — the dedupe key against owner venues
+  name: string;
+  address: string;
+  category: string;
+  categories?: string[];
+  latitude: number;
+  longitude: number;
+}
+
+// districtVenues/{districtId} — the shared cache document.
+export interface DistrictSnapshot {
+  districtId: string;
+  name: string;
+  center: { latitude: number; longitude: number };
+  radiusM: number;
+  venues: StubVenue[];
+  source: 'foursquare';
+  fetchedAt: FirestoreTimestamp | Date;
+  expiresAt: FirestoreTimestamp | Date;
+}
+
+// One entry in districtIndex/current. Districts are hand-curated rather than
+// dynamic geohash cells: the launch market has a small known set of nightlife
+// areas, and curating them bounds API spend exactly.
+export interface DistrictRef {
+  id: string;
+  name: string;
+  center: { latitude: number; longitude: number };
+  radiusM: number;
+}
+
+// districtIndex/current — a single small document listing every active
+// district, so locating the user costs ONE read regardless of district count.
+export interface DistrictIndex {
+  districts: DistrictRef[];
+  updatedAt: FirestoreTimestamp | Date;
 }
 
 // ── Consumer profile ─────────────────────────────────────────────────────────
@@ -134,7 +194,17 @@ export interface ConsumerProfile {
   location?: StoredLocation;
   locationPermission?: LocationPermissionState;
   profileCompleted?: boolean;
-  consumerTier?: ConsumerTier; // set by future consumer billing; absent = free
+  // Paid subscription tier — written ONLY by the revenueCatWebhook Cloud
+  // Function after Google Play confirms a purchase. Absent = free.
+  consumerTier?: ConsumerTier;
+
+  // Time-boxed Pro from a redeemed voucher code, written ONLY by the
+  // redeemVoucher Cloud Function. Deliberately a SEPARATE field from
+  // consumerTier so the two grant systems can never clobber each other: a
+  // voucher lapsing must not revoke a paid subscription, and a cancelled
+  // subscription must not swallow voucher time. A user is Pro if EITHER says so.
+  proGrantExpiresAt?: FirestoreTimestamp | Date;
+  proGrantCode?: string; // which voucher granted it (support/audit)
   createdAt?: FirestoreTimestamp | Date;
   updatedAt?: FirestoreTimestamp | Date;
 }

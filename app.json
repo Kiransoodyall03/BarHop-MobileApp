@@ -13,6 +13,11 @@
     },
     "android": {
       "package": "com.barhop.mobile",
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyDUhd9QPtzOIivCoiYS2L18QjjQlumwh5I"
+        }
+      },
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -41,7 +46,7 @@
       [
         "react-native-google-mobile-ads",
         {
-          "androidAppId": "ca-app-pub-3940256099942544~3347511713",
+          "androidAppId": "ca-app-pub-6244997531055231~8473860699",
           "iosAppId": "ca-app-pub-3940256099942544~1458002511"
         }
       ],

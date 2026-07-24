@@ -20,7 +20,11 @@ import { injectAdCards } from '../ads/injectAds';
 import { useAuth } from '../context/AuthContext';
 import { useSquad } from '../context/SquadContext';
 import { useConsumerSubscription } from '../hooks/useConsumerSubscription';
-import { fetchPublishedVenues, fetchSwipedVenueIds } from '../services/venueService';
+import {
+  fetchDeckVenues,
+  fetchPublishedVenues,
+  fetchSwipedVenueIds,
+} from '../services/venueService';
 import {
   recordSwipe,
   recordSquadSwipeActivity,
@@ -118,10 +122,19 @@ export default function SwipeScreen() {
       if (isInSquad) {
         // Squad mode: identical deck for every member (host filters applied
         // below, same for everyone) — personal history does not apply.
+        //
+        // Deliberately owner-created venues ONLY: auto-created stubs are
+        // resolved from the viewer's own district, and squad members routinely
+        // plan a night out from opposite sides of the city. Passing each
+        // member's location here would hand them different decks and silently
+        // break consensus matching (a venue only matches when EVERY member
+        // right-swipes it — impossible if some never see the card). Enabling
+        // stubs for squads needs the HOST's district stored on the squad doc,
+        // the same way `filters` already is.
         venues = await fetchPublishedVenues();
       } else {
         const [allVenues, swipedIds] = await Promise.all([
-          fetchPublishedVenues(),
+          fetchDeckVenues(profile?.location ?? null),
           fetchSwipedVenueIds(user.uid),
         ]);
         // Solo mode: never show a card the user has already swiped on.
@@ -412,6 +425,7 @@ export default function SwipeScreen() {
         title={upsell?.title}
         message={upsell?.message}
         ctaLabel={upgradeCtaLabel}
+        source="rewind"
         onClose={() => setUpsell(null)}
       />
 

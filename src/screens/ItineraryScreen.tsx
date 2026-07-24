@@ -302,6 +302,7 @@ export default function ItineraryScreen() {
             : `Pro plans hold ${maxItineraryStops} stops. BarHop Elite plans the whole night, unlimited.`
         }
         ctaLabel={upgradeCtaLabel}
+        source="itinerary"
         onClose={() => setUpsellVisible(false)}
       />
     </View>

@@ -20,12 +20,45 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/venues/$(venueId)).data.ownerId == request.auth.uid;
     }
 
+    // True when a write leaves `field` exactly as it already is — the guard that
+    // keeps billing tiers out of client hands.
+    //
+    // On CREATE `resource` is null, so the incoming value must be absent: a new
+    // user cannot sign up pre-promoted. On UPDATE the incoming value must equal
+    // the stored one. Note a merge write's `request.resource.data` is the
+    // RESULTING document, so an untouched field compares equal and passes.
+    // Only the Admin SDK (Cloud Functions) can change these, and it bypasses
+    // rules entirely.
+    function tierUnchanged(field) {
+      return request.resource.data.get(field, null) ==
+             (resource == null ? null : resource.data.get(field, null));
+    }
+
     // =========================================================
     // USERS COLLECTION
     // =========================================================
     match /users/{userId} {
       // A user must be logged in, and their UID must perfectly match the document ID.
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read: if request.auth != null && request.auth.uid == userId;
+
+      // MOBILE APP — PAID TIER INTEGRITY. Users own their profile, but must NOT
+      // be able to grant themselves a paid tier: consumerTier gates ads,
+      // unlimited swipes, Pro filters, and the squad member caps enforced below.
+      // Without this clause a client could simply write consumerTier:'pro' and
+      // take every paid feature for free, which makes the paywall decorative.
+      //
+      // consumerTier is written ONLY by the revenueCatWebhook Cloud Function
+      // (Admin SDK, which bypasses these rules) after Google Play confirms a
+      // purchase. The same protection applies to the B2B subscriptionTier,
+      // which the Paystack webhook owns.
+      // proGrant* is the voucher-granted Pro window, written only by the
+      // redeemVoucher function. Pinned for the same reason: a client that can
+      // set its own expiry date grants itself unlimited Pro.
+      allow write: if request.auth != null && request.auth.uid == userId
+        && tierUnchanged('consumerTier')
+        && tierUnchanged('subscriptionTier')
+        && tierUnchanged('proGrantExpiresAt')
+        && tierUnchanged('proGrantCode');
 
       // --- MOBILE APP: SWIPE HISTORY SUBCOLLECTION ---
       // Subcollection rules do NOT inherit from the parent match, so this is
@@ -118,6 +151,53 @@ service cloud.firestore {
               && request.resource.data.members.size() <= 3)
         );
       // no delete — squads end via isActive: false
+    }
+
+    // =========================================================
+    // VOUCHER CODES (1-month Pro giveaways)
+    // =========================================================
+    // Clients get NO access at all — not even read. If the app could read
+    // voucherCodes, any user could dump the collection and redeem every code in
+    // it; if it could read voucherRedemptions it could enumerate who redeemed
+    // what. All redemption happens inside the redeemVoucher callable, which
+    // uses the Admin SDK and bypasses these rules.
+    match /voucherCodes/{code} {
+      allow read, write: if false;
+    }
+
+    match /voucherRedemptions/{redemptionId} {
+      allow read, write: if false;
+    }
+
+    // =========================================================
+    // DISTRICT VENUE CACHE (auto-created venue cards)
+    // =========================================================
+    // MOBILE APP: the shared places cache. The refreshDistrictVenues scheduled
+    // function calls Foursquare ONCE per district per day and writes the
+    // result here; every user in that district then reads one document
+    // instead of making their own API call (1 000 users ⇒ 1 API call, not
+    // 1 000). Reads are open to any signed-in consumer.
+    //
+    // Writes are denied to EVERYONE. The function uses the Admin SDK, which
+    // bypasses these rules entirely — so `allow write: if false` costs the
+    // function nothing and guarantees no client can poison a district's cache
+    // for every other user in it.
+    // The hand-curated district registry the scheduled function reads. Pure
+    // server-side config (center, radiusM, active) — edited in the Firebase
+    // console, never touched by any client. Clients read districtIndex/current
+    // instead, which the function derives from this.
+    match /districts/{districtId} {
+      allow read, write: if false;
+    }
+
+    match /districtIndex/{document} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    match /districtVenues/{districtId} {
+      allow read: if request.auth != null;
+      allow write: if false;
     }
 
     // =========================================================

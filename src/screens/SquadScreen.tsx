@@ -254,6 +254,7 @@ export default function SquadScreen({ navigation }: Props) {
         title={upsell?.title}
         message={upsell?.message}
         ctaLabel={upgradeCtaLabel}
+        source="squad"
         onClose={() => setUpsell(null)}
       />
     </ScrollView>

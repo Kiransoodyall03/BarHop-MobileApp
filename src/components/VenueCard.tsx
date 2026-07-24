@@ -97,6 +97,14 @@ export default function VenueCard({ venue }: { venue: VenueWithId }) {
                 <Text style={styles.chipText}>{chip}</Text>
               </View>
             ))}
+            {/* Auto-created from the district cache — no owner has built a
+                card yet, so there are no photos, hours, or offers to show. */}
+            {venue.autoCreated && (
+              <View style={styles.unclaimedChip}>
+                <Ionicons name="sparkles-outline" size={12} color="rgba(255,255,255,0.9)" />
+                <Text style={styles.unclaimedText}>Unclaimed</Text>
+              </View>
+            )}
           </View>
 
           <View style={styles.statusRow}>
@@ -289,6 +297,24 @@ const createStyles = (colors: ThemeColors) =>
     statusClosed: { backgroundColor: 'rgba(248, 113, 113, 0.18)' },
     statusDot: { width: 7, height: 7, borderRadius: 4 },
     statusText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
+    unclaimedChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      backgroundColor: 'rgba(15, 8, 12, 0.45)',
+      borderColor: 'rgba(255, 255, 255, 0.35)',
+      borderWidth: 1,
+      borderStyle: 'dashed',
+      borderRadius: 999,
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+    },
+    unclaimedText: {
+      color: 'rgba(255, 255, 255, 0.9)',
+      fontSize: 12,
+      fontWeight: '600',
+    },
+
     statusUnknown: {
       color: 'rgba(255, 255, 255, 0.6)',
       fontSize: 13,

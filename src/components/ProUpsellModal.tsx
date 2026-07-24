@@ -1,9 +1,12 @@
 import React from 'react';
-import { Alert, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, useThemedStyles } from '../theme/ThemeContext';
 import type { ThemeColors } from '../theme/colors';
+import type { RootStackParamList } from '../navigation/AppNavigator';
 
 interface ProUpsellModalProps {
   visible: boolean;
@@ -12,6 +15,14 @@ interface ProUpsellModalProps {
   /** CTA copy — pass "Upgrade to Elite" when a Pro user hits a Pro cap. */
   ctaLabel?: string;
   onClose: () => void;
+  /** Which surface triggered this, recorded on the Paywall route. */
+  source?: string;
+  /**
+   * Call sites that render this INSIDE their own <Modal> must pass their own
+   * dismiss here. An RN modal left mounted covers the pushed Paywall screen,
+   * so the parent has to close before we navigate (see VenueFiltersModal).
+   */
+  onDismissParent?: () => void;
 }
 
 /** Reusable tier gate: pitch the next tier up, offer a graceful "Maybe later". */
@@ -21,15 +32,19 @@ export default function ProUpsellModal({
   message = 'BarHop Pro unlocks unlimited planning, no ads, and more.',
   ctaLabel = 'Upgrade to Pro',
   onClose,
+  source,
+  onDismissParent,
 }: ProUpsellModalProps) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
   function handleUpgradePress() {
-    Alert.alert(
-      'BarHop Pro is coming soon 🥂',
-      'Unlimited itinerary stops, unlimited swipes, and no ads. Watch this space.'
-    );
+    // Dismiss this modal — and any parent modal — BEFORE navigating, or the
+    // still-mounted RN modal sits on top of the Paywall.
+    onClose();
+    onDismissParent?.();
+    navigation.navigate('Paywall', { source });
   }
 
   return (

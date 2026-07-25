@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "BarHop-MobileApp",
+    "name": "BarHop",
     "slug": "BarHop-MobileApp",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -21,8 +21,7 @@
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundImage": "./assets/android-icon-background.png"
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -12,8 +12,12 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as Google from 'expo-auth-session/providers/google';
-import * as WebBrowser from 'expo-web-browser';
+import {
+  GoogleSignin,
+  isErrorWithCode,
+  isSuccessResponse,
+  statusCodes,
+} from '@react-native-google-signin/google-signin';
 import {
   authErrorMessage,
   loginWithEmail,
@@ -23,8 +27,22 @@ import {
 import { useTheme, useThemedStyles } from '../theme/ThemeContext';
 import type { ThemeColors } from '../theme/colors';
 
-// Completes the Google redirect if the app was opened by an auth callback.
-WebBrowser.maybeCompleteAuthSession();
+// The WEB / server OAuth client ID — Firebase validates the returned Google
+// idToken against this, so it must be the "Web application" client, NOT the
+// Android one. Native sign-in identifies the app itself by package name +
+// SHA-1 registered on the Google Cloud OAuth Android client.
+const GOOGLE_WEB_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
+
+// Configure once at load. Wrapped because the native module is absent in Expo
+// Go — there the Google button reports unavailable and email/password still
+// works. Dev-client and store builds have it.
+try {
+  if (GOOGLE_WEB_CLIENT_ID) {
+    GoogleSignin.configure({ webClientId: GOOGLE_WEB_CLIENT_ID });
+  }
+} catch {
+  // Expo Go — native module unavailable.
+}
 
 type Mode = 'login' | 'register';
 
@@ -37,40 +55,6 @@ export default function AuthScreen() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-
-  const googleConfigured = Boolean(
-    process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ||
-      process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ||
-      process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID
-  );
-
-  // NOTE: Google Sign-In cannot run inside Expo Go (Google rejects exp://
-  // redirect URIs) — it needs a development/standalone build with the client
-  // IDs below configured. Email/password works everywhere. See README.
-  const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
-    webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
-    iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
-    androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
-    selectAccount: true,
-  });
-
-  useEffect(() => {
-    if (!response) return;
-    if (response.type === 'success') {
-      const idToken = response.params?.id_token;
-      if (!idToken) {
-        setError('Google sign-in did not return a credential. Please try again.');
-        return;
-      }
-      setSubmitting(true);
-      signInWithGoogleIdToken(idToken)
-        .catch((err) => setError(authErrorMessage(err)))
-        .finally(() => setSubmitting(false));
-      // On success AuthContext flips the navigator to the main app.
-    } else if (response.type === 'error') {
-      setError('Google sign-in failed. Please try again.');
-    }
-  }, [response]);
 
   const canSubmit = useMemo(
     () => email.trim().length > 0 && password.length >= 6 && !submitting,
@@ -95,15 +79,37 @@ export default function AuthScreen() {
     }
   }
 
-  function handleGooglePress() {
+  async function handleGooglePress() {
     setError(null);
-    if (!googleConfigured || !request) {
-      setError(
-        'Google Sign-In needs OAuth client IDs and a development build — see the README. Use email & password for now.'
-      );
+    if (!GOOGLE_WEB_CLIENT_ID) {
+      setError('Google Sign-In isn’t available in this build. Use email & password for now.');
       return;
     }
-    promptAsync();
+    setSubmitting(true);
+    try {
+      // Ensures up-to-date Play Services; on Android without them signIn can't run.
+      await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+      const result = await GoogleSignin.signIn();
+      if (isSuccessResponse(result)) {
+        const idToken = result.data.idToken;
+        if (!idToken) {
+          setError('Google sign-in did not return a credential. Please try again.');
+          setSubmitting(false);
+          return;
+        }
+        await signInWithGoogleIdToken(idToken);
+        // Success: AuthContext flips the navigator to the main app; this unmounts.
+        return;
+      }
+      // User dismissed the account chooser — not an error.
+      setSubmitting(false);
+    } catch (err) {
+      // Cancelling the native sheet surfaces as SIGN_IN_CANCELLED — stay silent.
+      if (!(isErrorWithCode(err) && err.code === statusCodes.SIGN_IN_CANCELLED)) {
+        setError(authErrorMessage(err));
+      }
+      setSubmitting(false);
+    }
   }
 
   return (

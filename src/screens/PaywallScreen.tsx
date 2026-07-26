@@ -32,8 +32,8 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Paywall'>;
 type BillingPeriod = 'annual' | 'monthly';
 
 // Google Play requires these to be reachable from the purchase screen.
-const TERMS_URL = 'https://barhop.co.za/terms';
-const PRIVACY_URL = 'https://barhop.co.za/privacy';
+const TERMS_URL = 'https://barhopcreator.netlify.app/terms';
+const PRIVACY_URL = 'https://barhopcreator.netlify.app/privacy';
 
 const free = TIER_LIMITS.free;
 const pro = TIER_LIMITS.pro;

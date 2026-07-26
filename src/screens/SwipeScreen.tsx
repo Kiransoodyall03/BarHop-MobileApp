@@ -140,10 +140,18 @@ export default function SwipeScreen() {
         // Solo mode: never show a card the user has already swiped on.
         venues = allVenues.filter((venue) => !swipedIds.has(venue.id));
       }
+      // Distance is the ONE filter that depends on the viewer's own location,
+      // so in a squad it must be skipped: applying the host's maxDistanceKm
+      // against each member's location would filter the shared deck differently
+      // per member and break consensus (same reason the deck is owner-only
+      // above). Genre/dress/cover are venue properties — identical for everyone
+      // — so they still apply. Honoring distance in a squad needs the host's
+      // location on the squad doc; deferred with that enhancement.
+      const filterLocation = isInSquad ? null : profile?.location ?? null;
       const filtered = applyProFilters(
         venues,
         JSON.parse(filtersKey) as VenueFilters,
-        profile?.location ?? null
+        filterLocation
       );
       // Ads: skipped entirely for Pro/Elite (showAds false) and in Expo Go.
       setDeck(injectAdCards(filtered, 8, showAds));

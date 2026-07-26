@@ -50,7 +50,9 @@
         }
       ],
       "./plugins/withGoogleAdsKotlinFix",
-      "expo-font"
+      "expo-font",
+      "@react-native-google-signin/google-signin",
+      "@sentry/react-native"
     ],
     "extra": {
       "eas": {

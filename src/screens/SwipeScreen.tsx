@@ -10,6 +10,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
+import BarHopLogo from '../components/BarHopLogo';
 import SwipeDeck, { type SwipeDeckHandle } from '../components/SwipeDeck';
 import MatchModal from '../components/MatchModal';
 import VenueDetailsSheet from '../components/VenueDetailsSheet';
@@ -80,6 +81,21 @@ export default function SwipeScreen() {
   // inherited live by every member so decks stay identical for consensus.
   const [soloFilters, setSoloFilters] = useState<VenueFilters>(EMPTY_FILTERS);
   const [filtersVisible, setFiltersVisible] = useState(false);
+
+  // Pre-fill the solo deck's dietary filter from the user's saved profile
+  // preference — ONCE, and only if they haven't already set a dietary filter
+  // this session. After that it's fully editable (edits and clears stick), so
+  // it's a starting point, not a lock. Squad decks use the host's filters.
+  const seededDietary = useRef(false);
+  useEffect(() => {
+    if (seededDietary.current) return;
+    const prefs = profile?.dietaryPreferences;
+    if (prefs && prefs.length > 0) {
+      seededDietary.current = true;
+      setSoloFilters((f) => (f.dietary.length ? f : { ...f, dietary: prefs }));
+    }
+  }, [profile?.dietaryPreferences]);
+
   const activeFilters = isInSquad ? normalizeFilters(squad?.filters) : soloFilters;
   // Reload key: changes ONLY when the applied filters change (a squad's likes
   // updates must not churn the deck).
@@ -303,9 +319,7 @@ export default function SwipeScreen() {
   return (
     <View style={styles.container}>
       <View style={[styles.header, { top: insets.top + 8 }]}>
-        <Text style={styles.headerWordmark}>
-          Bar<Text style={styles.headerWordmarkAccent}>Hop</Text>
-        </Text>
+        <BarHopLogo width={104} />
         <View style={styles.headerPills}>
           {!hasUnlimitedSwipes && remainingSwipes <= 5 && (
             <View style={[styles.pill, outOfSwipes && styles.pillAlert]}>
@@ -331,10 +345,37 @@ export default function SwipeScreen() {
         </View>
       </View>
 
+      {/*
+        The deck is ALWAYS mounted (below the loading guard) so it keeps its
+        internal card position. The out-of-swipes and exhausted states render as
+        overlays ON TOP — a full-cover View that captures touches, freezing the
+        deck without unmounting it. Previously the out-of-swipes case swapped the
+        whole deck out; remounting after the rewarded ad reset the position to 0
+        and replayed already-swiped cards.
+      */}
+      <View
+        style={[
+          styles.deckArea,
+          {
+            marginTop: insets.top + 52,
+            marginBottom: tabBarHeight + ACTION_BUTTON_CLEARANCE,
+          },
+        ]}
+      >
+        <SwipeDeck
+          ref={deckRef}
+          items={deck}
+          onSwiped={handleSwiped}
+          onDeckEmpty={() => setAllSwiped(true)}
+          onSwipeUp={setDetailsVenue}
+        />
+      </View>
+
       {outOfSwipes ? (
-        // Deck frozen: budget exhausted. The modal auto-opened once; this
-        // state remains behind it (and after dismissal) with a reopen CTA.
-        <View style={[styles.centered, { paddingBottom: tabBarHeight }]}>
+        // Budget exhausted — overlay blocks swiping (and hides the action
+        // buttons) while the deck stays mounted behind it, so watching an ad
+        // resumes from the next unseen card instead of the start.
+        <View style={[styles.emptyOverlay, { paddingBottom: tabBarHeight }]}>
           <Text style={styles.emptyEmoji}>🥃</Text>
           <Text style={styles.emptyTitle}>You&apos;re out of swipes</Text>
           <Text style={styles.emptySubtitle}>
@@ -344,77 +385,54 @@ export default function SwipeScreen() {
             <Text style={styles.retryButtonText}>Get More Swipes</Text>
           </Pressable>
         </View>
-      ) : (
-        <>
-          {/* Deck stays MOUNTED through exhaustion so Rewind can revive it. */}
-          <View
-            style={[
-              styles.deckArea,
-              {
-                marginTop: insets.top + 52,
-                marginBottom: tabBarHeight + ACTION_BUTTON_CLEARANCE,
-              },
-            ]}
-          >
-            <SwipeDeck
-              ref={deckRef}
-              items={deck}
-              onSwiped={handleSwiped}
-              onDeckEmpty={() => setAllSwiped(true)}
-              onSwipeUp={setDetailsVenue}
-            />
-          </View>
-
-          {deckExhausted ? (
-            <View style={[styles.emptyOverlay, { paddingBottom: tabBarHeight }]}>
-              <Text style={styles.emptyEmoji}>🌙</Text>
-              <Text style={styles.emptyTitle}>No more venues tonight</Text>
-              <Text style={styles.emptySubtitle}>
-                {activeFilterCount > 0
-                  ? 'Nothing else matches the current filters. Loosen them or check back later.'
-                  : isInSquad
-                    ? "Your squad has seen every spot in town. Fingers crossed a match landed."
-                    : "You've seen every spot in town. Check back soon — new venues join BarHop all the time."}
-              </Text>
-              <Pressable style={styles.retryButton} onPress={loadDeck}>
-                <Text style={styles.retryButtonText}>Refresh</Text>
-              </Pressable>
-              {lastSwiped && (
-                <Pressable style={styles.rewindLink} onPress={handleRewind}>
-                  <Ionicons name="arrow-undo" size={16} color={colors.accent} />
-                  <Text style={styles.rewindLinkText}>Rewind last swipe</Text>
-                </Pressable>
-              )}
-            </View>
-          ) : (
-            <View style={[styles.actions, { bottom: tabBarHeight + 12 }]}>
-              {/* Pro Rewind — gold, visually distinct, disabled with no cache */}
-              <Pressable
-                style={[
-                  styles.actionButton,
-                  styles.actionRewind,
-                  !lastSwiped && styles.actionDisabled,
-                ]}
-                onPress={handleRewind}
-                disabled={!lastSwiped}
-              >
-                <Ionicons name="arrow-undo" size={24} color={colors.accent} />
-              </Pressable>
-              <Pressable
-                style={[styles.actionButton, styles.actionNope]}
-                onPress={() => deckRef.current?.swipeLeft()}
-              >
-                <Text style={[styles.actionIcon, { color: colors.nope }]}>✕</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.actionButton, styles.actionLike]}
-                onPress={() => deckRef.current?.swipeRight()}
-              >
-                <Text style={[styles.actionIcon, { color: colors.like }]}>♥</Text>
-              </Pressable>
-            </View>
+      ) : deckExhausted ? (
+        <View style={[styles.emptyOverlay, { paddingBottom: tabBarHeight }]}>
+          <Text style={styles.emptyEmoji}>🌙</Text>
+          <Text style={styles.emptyTitle}>No more venues tonight</Text>
+          <Text style={styles.emptySubtitle}>
+            {activeFilterCount > 0
+              ? 'Nothing else matches the current filters. Loosen them or check back later.'
+              : isInSquad
+                ? "Your squad has seen every spot in town. Fingers crossed a match landed."
+                : "You've seen every spot in town. Check back soon — new venues join BarHop all the time."}
+          </Text>
+          <Pressable style={styles.retryButton} onPress={loadDeck}>
+            <Text style={styles.retryButtonText}>Refresh</Text>
+          </Pressable>
+          {lastSwiped && (
+            <Pressable style={styles.rewindLink} onPress={handleRewind}>
+              <Ionicons name="arrow-undo" size={16} color={colors.accent} />
+              <Text style={styles.rewindLinkText}>Rewind last swipe</Text>
+            </Pressable>
           )}
-        </>
+        </View>
+      ) : (
+        <View style={[styles.actions, { bottom: tabBarHeight + 12 }]}>
+          {/* Pro Rewind — gold, visually distinct, disabled with no cache */}
+          <Pressable
+            style={[
+              styles.actionButton,
+              styles.actionRewind,
+              !lastSwiped && styles.actionDisabled,
+            ]}
+            onPress={handleRewind}
+            disabled={!lastSwiped}
+          >
+            <Ionicons name="arrow-undo" size={24} color={colors.accent} />
+          </Pressable>
+          <Pressable
+            style={[styles.actionButton, styles.actionNope]}
+            onPress={() => deckRef.current?.swipeLeft()}
+          >
+            <Text style={[styles.actionIcon, { color: colors.nope }]}>✕</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.actionButton, styles.actionLike]}
+            onPress={() => deckRef.current?.swipeRight()}
+          >
+            <Text style={[styles.actionIcon, { color: colors.like }]}>♥</Text>
+          </Pressable>
+        </View>
       )}
 
       <VenueDetailsSheet venue={detailsVenue} onClose={() => setDetailsVenue(null)} />
@@ -470,13 +488,6 @@ const createStyles = (colors: ThemeColors) =>
       justifyContent: 'space-between',
       alignItems: 'center',
     },
-    headerWordmark: {
-      fontSize: 22,
-      fontWeight: '800',
-      color: colors.text,
-      letterSpacing: 0.5,
-    },
-    headerWordmarkAccent: { color: colors.primary },
     headerPills: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     pill: {
       backgroundColor: colors.chipActiveBg,

@@ -59,15 +59,21 @@ export default function VenueDetailsSheet({ venue, onClose }: VenueDetailsSheetP
 
   const translateY = useSharedValue(0);
   const dragPan = Gesture.Pan()
+    // Activate on the first hint of downward movement so the sheet tracks the
+    // finger immediately — no dead zone before it starts following.
+    .activeOffsetY(4)
     .onChange((event) => {
       translateY.value = Math.max(0, event.translationY);
     })
     .onEnd((event) => {
-      if (translateY.value > 110 || event.velocityY > 900) {
+      // Close on any deliberate pull-down: a quick flick (velocity) OR a slow
+      // drag past a short distance. Everything else springs back. Lower
+      // thresholds than before so it closes "at any speed", not just a big yank.
+      if (translateY.value > 80 || event.velocityY > 500) {
         runOnJS(onClose)();
         translateY.value = 0;
       } else {
-        translateY.value = withSpring(0, { damping: 18, stiffness: 220 });
+        translateY.value = withSpring(0, { damping: 20, stiffness: 200 });
       }
     });
   const sheetStyle = useAnimatedStyle(() => ({
@@ -309,10 +315,12 @@ const createStyles = (colors: ThemeColors) =>
       borderColor: colors.border,
       overflow: 'hidden',
     },
-    handleZone: { alignItems: 'center', paddingVertical: 12 },
+    // Taller, full-width grab target — the whole top strip drags, not just the
+    // thin bar, so it's easy to catch and pull down.
+    handleZone: { alignItems: 'center', paddingTop: 14, paddingBottom: 20 },
     handle: {
-      width: 96,
-      height: 5,
+      width: 108,
+      height: 6,
       borderRadius: 3,
       backgroundColor: colors.borderStrong,
     },

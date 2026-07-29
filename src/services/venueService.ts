@@ -3,11 +3,20 @@ import { db } from '../firebase/config';
 import { fetchDistrictStubs, isStubVenueId, lookupStubs } from './districtService';
 import type { StoredLocation, Venue, VenueWithId } from '../types';
 
+// Dev sample venues (src/dev/sampleVenues.ts) are seeded with this placeId
+// prefix. They can end up in the production `venues` collection if seeded from
+// a dev build pointed at prod, so they're filtered out here — the single read
+// path for both solo and squad decks — as a permanent safeguard. Real
+// Foursquare / owner place IDs never carry this prefix.
+const SAMPLE_VENUE_PREFIX = 'sample-';
+
 /** All venues the B2B webapp has published to the consumer app. */
 export async function fetchPublishedVenues(): Promise<VenueWithId[]> {
   const q = query(collection(db, 'venues'), where('published', '==', true));
   const snapshot = await getDocs(q);
-  return snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as Venue) }));
+  return snapshot.docs
+    .map((d) => ({ id: d.id, ...(d.data() as Venue) }))
+    .filter((v) => !(v.placeId ?? '').startsWith(SAMPLE_VENUE_PREFIX));
 }
 
 /**

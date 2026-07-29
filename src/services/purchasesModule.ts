@@ -108,6 +108,41 @@ export async function getProPackages(): Promise<PurchasesPackage[]> {
   }
 }
 
+/**
+ * Length of the free trial on a package, in days, or null when its base plan
+ * carries no trial offer.
+ *
+ * Derived from the product for the same reason prices are (see the file
+ * header): Play is the source of truth. Hardcoding "7 days" in the paywall
+ * means the copy keeps promising a trial even if the offer is deactivated,
+ * mispriced or never created — which is a Play review rejection for misleading
+ * subscription disclosure, and a refund request from every user who is charged
+ * on day one.
+ *
+ * `defaultOption` is the option actually purchased, and Google Play only —
+ * other stores return null, which degrades to non-trial copy rather than
+ * over-promising.
+ */
+export function getFreeTrialDays(pkg: PurchasesPackage): number | null {
+  const period = pkg.product.defaultOption?.freePhase?.billingPeriod;
+  if (!period || period.value <= 0) return null;
+
+  // Months/years are approximated — this figure is only ever used as display
+  // copy, and Play trials are days or weeks in practice.
+  switch (String(period.unit)) {
+    case 'DAY':
+      return period.value;
+    case 'WEEK':
+      return period.value * 7;
+    case 'MONTH':
+      return period.value * 30;
+    case 'YEAR':
+      return period.value * 365;
+    default:
+      return null;
+  }
+}
+
 export type PurchaseOutcome =
   | { status: 'purchased' }
   | { status: 'cancelled' }

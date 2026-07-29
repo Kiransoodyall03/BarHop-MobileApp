@@ -25,7 +25,7 @@ interface MediaItem {
  * Full-bleed venue card, front face only (details live in VenueDetailsSheet):
  * stories-style media stack (all images + the venue video as the final slide,
  * tap left third = back / elsewhere = forward), live Open/Closed badge,
- * name, categories, address, and a distance placeholder.
+ * name (+ verified check), categories, address, and a distance placeholder.
  */
 export default function VenueCard({ venue }: { venue: VenueWithId }) {
   const { colors } = useTheme();
@@ -52,8 +52,10 @@ export default function VenueCard({ venue }: { venue: VenueWithId }) {
     );
   }
 
+  // Both sides can be empty: a venue whose source tags mapped to nothing
+  // carries no category at all (see Venue.category), and renders no chips.
   const chips = (venue.categories?.length ? venue.categories : [venue.category])
-    .filter(Boolean)
+    .filter((chip): chip is string => Boolean(chip))
     .slice(0, 3);
   const openStatus = getOpenStatus(venue.hours);
 
@@ -87,9 +89,23 @@ export default function VenueCard({ venue }: { venue: VenueWithId }) {
           colors={['transparent', 'rgba(10, 5, 8, 0.62)', 'rgba(10, 5, 8, 0.94)']}
           style={styles.cardGradient}
         >
-          <Text style={styles.venueName} numberOfLines={2}>
-            {venue.name}
-          </Text>
+          <View style={styles.nameRow}>
+            <Text style={styles.venueName} numberOfLines={2}>
+              {venue.name}
+            </Text>
+            {/* venues/{id}.verified — written by the Creator webapp once an
+                owner clears Paystack KYB. Gold rather than the theme accent:
+                the photo scrim is always dark, so overlay chrome is
+                theme-independent (see the gradient note below). */}
+            {venue.verified && (
+              <Ionicons
+                name="checkmark-circle"
+                size={19}
+                color="#FFB84D"
+                style={styles.verifiedBadge}
+              />
+            )}
+          </View>
 
           <View style={styles.chipRow}>
             {chips.map((chip) => (
@@ -252,12 +268,21 @@ const createStyles = (colors: ThemeColors) =>
       paddingTop: 46,
       paddingBottom: 24,
     },
+    nameRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 7,
+    },
     venueName: {
       color: '#FFFFFF',
       fontSize: 34,
       fontWeight: '800',
       letterSpacing: 0.3,
+      // Must shrink, not push the badge off-screen, on long two-line names.
+      flexShrink: 1,
     },
+    // Nudged down to sit on the first line's optical centre, not its box top.
+    verifiedBadge: { marginTop: 9 },
     chipRow: {
       flexDirection: 'row',
       flexWrap: 'wrap',

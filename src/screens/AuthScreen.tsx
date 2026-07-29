@@ -18,6 +18,7 @@ import {
   isSuccessResponse,
   statusCodes,
 } from '@react-native-google-signin/google-signin';
+import BarHopLogo from '../components/BarHopLogo';
 import {
   authErrorMessage,
   loginWithEmail,
@@ -48,7 +49,8 @@ type Mode = 'login' | 'register';
 
 export default function AuthScreen() {
   const insets = useSafeAreaInsets();
-  const { colors } = useTheme();
+  // Aliased — `mode` is already this screen's login/register state.
+  const { colors, mode: themeMode } = useTheme();
   const styles = useThemedStyles(createStyles);
   const [mode, setMode] = useState<Mode>('login');
   const [email, setEmail] = useState('');
@@ -125,9 +127,7 @@ export default function AuthScreen() {
           ]}
           keyboardShouldPersistTaps="handled"
         >
-          <Text style={styles.wordmark}>
-            Bar<Text style={styles.wordmarkAccent}>Hop</Text>
-          </Text>
+          <BarHopLogo width={248} style={styles.logo} />
           <Text style={styles.tagline}>Swipe your night out.</Text>
 
           <View style={styles.form}>
@@ -191,10 +191,21 @@ export default function AuthScreen() {
             <Pressable
               onPress={handleGooglePress}
               disabled={submitting}
-              style={({ pressed }) => [styles.googleButton, pressed && styles.pressedDim]}
+              style={({ pressed }) => [
+                styles.googleButton,
+                themeMode === 'dark' && styles.googleButtonDark,
+                pressed && styles.pressedDim,
+              ]}
             >
               <Text style={styles.googleG}>G</Text>
-              <Text style={styles.googleButtonText}>Continue with Google</Text>
+              <Text
+                style={[
+                  styles.googleButtonText,
+                  themeMode === 'dark' && styles.googleButtonTextDark,
+                ]}
+              >
+                Continue with Google
+              </Text>
             </Pressable>
 
             <Pressable
@@ -227,14 +238,7 @@ const createStyles = (colors: ThemeColors) =>
       paddingHorizontal: 28,
       justifyContent: 'center',
     },
-    wordmark: {
-      fontSize: 48,
-      fontWeight: '800',
-      color: colors.text,
-      textAlign: 'center',
-      letterSpacing: 1,
-    },
-    wordmarkAccent: { color: colors.primary },
+    logo: { alignSelf: 'center' },
     tagline: {
       marginTop: 6,
       marginBottom: 40,
@@ -285,6 +289,10 @@ const createStyles = (colors: ThemeColors) =>
     },
     dividerLine: { flex: 1, height: 1, backgroundColor: colors.borderStrong },
     dividerText: { color: colors.textFaint, marginHorizontal: 12, fontSize: 13 },
+    // Google's branding guidelines allow a light OR a dark button; the blue "G"
+    // is fixed in both. A white slab on the dark plum gradient was the one part
+    // of this screen that ignored the theme, so dark mode takes the dark
+    // variant instead of forcing white.
     googleButton: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -295,6 +303,10 @@ const createStyles = (colors: ThemeColors) =>
       borderRadius: 14,
       paddingVertical: 15,
       gap: 10,
+    },
+    googleButtonDark: {
+      backgroundColor: colors.surface,
+      borderColor: colors.borderStrong,
     },
     pressedDim: { opacity: 0.8 },
     googleG: {
@@ -307,6 +319,7 @@ const createStyles = (colors: ThemeColors) =>
       fontSize: 16,
       fontWeight: '600',
     },
+    googleButtonTextDark: { color: colors.text },
     switchMode: { marginTop: 26, alignItems: 'center' },
     switchModeText: { color: colors.textMuted, fontSize: 15 },
     switchModeAccent: { color: colors.primary, fontWeight: '700' },

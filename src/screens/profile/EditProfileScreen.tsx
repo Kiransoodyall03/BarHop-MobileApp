@@ -17,7 +17,12 @@ import { useAuth } from '../../context/AuthContext';
 import { ageFromDob, updateProfile } from '../../services/profileService';
 import { useTheme, useThemedStyles } from '../../theme/ThemeContext';
 import type { ThemeColors } from '../../theme/colors';
-import { GENDER_OPTIONS, VENUE_CATEGORIES, type Gender } from '../../types';
+import {
+  DIETARY_OPTIONS,
+  GENDER_OPTIONS,
+  ONBOARDING_CATEGORY_CHIPS,
+  type Gender,
+} from '../../types';
 import type { ProfileStackParamList } from '../../navigation/MainTabs';
 
 const MIN_AGE = 18;
@@ -36,6 +41,9 @@ export default function EditProfileScreen({ navigation }: Props) {
   const [favoriteCategories, setFavoriteCategories] = useState<string[]>(
     profile?.favoriteCategories ?? []
   );
+  const [dietaryPreferences, setDietaryPreferences] = useState<string[]>(
+    profile?.dietaryPreferences ?? []
+  );
   const [touched, setTouched] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -52,6 +60,12 @@ export default function EditProfileScreen({ navigation }: Props) {
     );
   }
 
+  function toggleDietary(option: string) {
+    setDietaryPreferences((current) =>
+      current.includes(option) ? current.filter((d) => d !== option) : [...current, option]
+    );
+  }
+
   async function handleSave() {
     setTouched(true);
     if (!user || !valid || saving) return;
@@ -64,6 +78,7 @@ export default function EditProfileScreen({ navigation }: Props) {
         dateOfBirth,
         ...(gender ? { gender } : {}),
         favoriteCategories,
+        dietaryPreferences,
       });
       navigation.goBack();
     } catch (error) {
@@ -119,9 +134,15 @@ export default function EditProfileScreen({ navigation }: Props) {
         />
         <ChipSelect
           label="What are you into?"
-          options={VENUE_CATEGORIES.map((c) => ({ value: c, label: c }))}
+          options={ONBOARDING_CATEGORY_CHIPS.map((c) => ({ value: c, label: c }))}
           selected={favoriteCategories}
           onToggle={toggleCategory}
+        />
+        <ChipSelect
+          label="Dietary needs"
+          options={DIETARY_OPTIONS}
+          selected={dietaryPreferences}
+          onToggle={toggleDietary}
         />
 
         <Pressable

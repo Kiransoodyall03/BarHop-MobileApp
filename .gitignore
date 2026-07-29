@@ -34,6 +34,14 @@ yarn-error.*
 .env
 .env*.local
 
+# Google Cloud service account keys (RevenueCat ↔ Play Developer API, Firebase
+# Admin). Defensive only — keep these OUTSIDE the repo entirely. A leaked key
+# grants whatever the account was granted, and revoking means re-issuing it.
+*service-account*.json
+*serviceaccount*.json
+gcp-*.json
+google-services.json
+
 # typescript
 *.tsbuildinfo
 

@@ -9,12 +9,14 @@ interface OnboardingState {
   dateOfBirth: string; // ISO 'YYYY-MM-DD'
   gender: Gender | null;
   favoriteCategories: string[];
+  dietaryPreferences: string[];
 }
 
 interface OnboardingContextValue extends OnboardingState {
   setAboutYou: (data: { firstName: string; lastName: string; dateOfBirth: string }) => void;
   setGender: (gender: Gender | null) => void;
   toggleCategory: (category: string) => void;
+  toggleDietary: (option: string) => void;
   /** Writes the whole profile + profileCompleted: true. Throws on failure. */
   finish: () => Promise<void>;
   submitting: boolean;
@@ -30,6 +32,7 @@ export function OnboardingProvider({ children }: PropsWithChildren) {
     dateOfBirth: '',
     gender: null,
     favoriteCategories: [],
+    dietaryPreferences: [],
   });
   const [submitting, setSubmitting] = useState(false);
 
@@ -45,6 +48,13 @@ export function OnboardingProvider({ children }: PropsWithChildren) {
           ? prev.favoriteCategories.filter((c) => c !== category)
           : [...prev.favoriteCategories, category],
       })),
+    toggleDietary: (option) =>
+      setState((prev) => ({
+        ...prev,
+        dietaryPreferences: prev.dietaryPreferences.includes(option)
+          ? prev.dietaryPreferences.filter((d) => d !== option)
+          : [...prev.dietaryPreferences, option],
+      })),
     finish: async () => {
       if (!user) return;
       setSubmitting(true);
@@ -56,6 +66,9 @@ export function OnboardingProvider({ children }: PropsWithChildren) {
           ...(state.gender ? { gender: state.gender } : {}),
           ...(state.favoriteCategories.length
             ? { favoriteCategories: state.favoriteCategories }
+            : {}),
+          ...(state.dietaryPreferences.length
+            ? { dietaryPreferences: state.dietaryPreferences }
             : {}),
         });
         // AuthContext's profile snapshot flips needsOnboarding → tabs appear.

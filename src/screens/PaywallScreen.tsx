@@ -17,6 +17,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/AppNavigator';
 import RedeemCodeModal from '../components/RedeemCodeModal';
 import {
+  getFreeTrialDays,
   getProPackages,
   purchaseProPackage,
   purchasesSupported,
@@ -84,6 +85,11 @@ export default function PaywallScreen({ navigation }: Props) {
   const annualPackage = packages?.find((p) => p.packageType === 'ANNUAL') ?? null;
   const monthlyPackage = packages?.find((p) => p.packageType === 'MONTHLY') ?? null;
   const selected = period === 'annual' ? annualPackage : monthlyPackage;
+
+  // Trial length comes from the base plan's offer, never from copy — configure
+  // it in Play Console and the CTA follows; remove it there and the paywall
+  // stops advertising one instead of lying.
+  const trialDays = selected ? getFreeTrialDays(selected) : null;
 
   // Savings are computed from the real prices rather than hardcoded, so they
   // stay correct whatever you set in Play Console.
@@ -232,7 +238,9 @@ export default function PaywallScreen({ navigation }: Props) {
                 ) : (
                   <>
                     <Ionicons name="sparkles" size={18} color={colors.onPrimary} />
-                    <Text style={styles.ctaText}>Start 7-day free trial</Text>
+                    <Text style={styles.ctaText}>
+                      {trialDays ? `Start ${trialDays}-day free trial` : 'Get BarHop Pro'}
+                    </Text>
                   </>
                 )}
               </LinearGradient>
@@ -241,7 +249,8 @@ export default function PaywallScreen({ navigation }: Props) {
 
           {!isPro && !unavailable ? (
             <Text style={styles.trialNote}>
-              7 days free, then {selected?.product.priceString ?? '—'}
+              {trialDays ? `${trialDays} days free, then ` : ''}
+              {selected?.product.priceString ?? '—'}
               {period === 'annual' ? '/year' : '/month'}. Cancel anytime in Google Play.
             </Text>
           ) : null}

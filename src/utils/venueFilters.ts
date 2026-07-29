@@ -28,7 +28,7 @@ export function applyProFilters(
 
     if (filters.genres.length > 0) {
       const venueTags = [...(venue.categories ?? []), venue.category, ...(venue.musicGenres ?? [])]
-        .filter(Boolean)
+        .filter((tag): tag is string => Boolean(tag))
         .map((tag) => tag.toLowerCase());
       // Lenient: venues with no tag data at all pass through.
       if (venueTags.length > 0 && !filters.genres.some((g) => venueTags.includes(g.toLowerCase()))) {
@@ -48,6 +48,18 @@ export function applyProFilters(
       return false;
     }
 
+    if (filters.dietary.length > 0) {
+      const venueDietary = (venue.dietaryOptions ?? []).map((d) => d.toLowerCase());
+      // Lenient (like genres): venues with no dietary data pass. Once a venue
+      // DOES declare options, require at least one overlap with the filter.
+      if (
+        venueDietary.length > 0 &&
+        !filters.dietary.some((d) => venueDietary.includes(d.toLowerCase()))
+      ) {
+        return false;
+      }
+    }
+
     return true;
   });
 }
@@ -60,9 +72,15 @@ export function countActiveFilters(filters: VenueFilters | null | undefined): nu
   if (filters.genres.length > 0) count += 1;
   if (filters.dressCode) count += 1;
   if (filters.maxCover != null) count += 1;
+  if (filters.dietary.length > 0) count += 1;
   return count;
 }
 
+/**
+ * Backfills any missing keys from EMPTY_FILTERS — squad filters stored in
+ * Firestore before a field (e.g. `dietary`) existed would otherwise arrive
+ * without it and crash `filters.dietary.length`.
+ */
 export function normalizeFilters(filters: VenueFilters | null | undefined): VenueFilters {
-  return filters ?? EMPTY_FILTERS;
+  return { ...EMPTY_FILTERS, ...(filters ?? {}) };
 }

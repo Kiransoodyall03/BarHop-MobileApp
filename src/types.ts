@@ -40,7 +40,13 @@ export interface Venue {
   name: string;
   address: string;
   description: string;
-  category: string; // Primary category (first of categories); kept for consumer-app compatibility
+  // Primary category (first of categories); kept for consumer-app compatibility.
+  // OPTIONAL by contract: a venue whose source tags map to nothing in
+  // VENUE_CATEGORIES must arrive with no category at all rather than a guessed
+  // one. applyProFilters treats an untagged venue leniently (kept in the deck);
+  // a wrong tag excludes it from the right filters and matches it into the
+  // wrong ones, which is strictly worse than no tag.
+  category?: string;
   categories?: string[]; // Up to 3 categories shown as chips on the swipe card
   tagline: string;
   images: string[]; // URLs from Firebase Storage / Cloudinary
@@ -73,6 +79,10 @@ export interface Venue {
   dressCode?: 'casual' | 'smart-casual' | 'formal';
   coverCharge?: number; // ZAR; 0 = free entry
   currentBusyness?: 'quiet' | 'lively' | 'at-capacity'; // live "Vibe Check"
+  // Dietary options the venue caters to (halal/vegan/…), lowercase. Written by
+  // the Creator webapp / sourced from Foursquare attributes. Matched against
+  // VenueFilters.dietary; venues without it are treated leniently (kept).
+  dietaryOptions?: string[];
 }
 
 // A venue as fetched from Firestore: document data + the document ID, which
@@ -122,10 +132,16 @@ export interface StubVenue {
   placeId: string; // Foursquare fsq_place_id — the dedupe key against owner venues
   name: string;
   address: string;
-  category: string;
+  // Optional for the same reason as Venue.category — refreshDistrictVenues must
+  // not guess a category for a place whose Foursquare tags map to nothing.
+  category?: string;
   categories?: string[];
   latitude: number;
   longitude: number;
+  // A single Foursquare photo URL, fetched ONCE per venue by the refresh
+  // function and cached in the snapshot (only new venues cost a Premium call).
+  // Absent ⇒ the card shows the 🍸 fallback.
+  photoUrl?: string;
 }
 
 // districtVenues/{districtId} — the shared cache document.
@@ -191,6 +207,9 @@ export interface ConsumerProfile {
   dateOfBirth?: string; // ISO 'YYYY-MM-DD'; 18+ enforced in the UI
   gender?: Gender;
   favoriteCategories?: string[];
+  // Dietary needs (halal/vegan/…) chosen at onboarding or in profile editing.
+  // Pre-fills the discovery dietary filter (editable per session).
+  dietaryPreferences?: string[];
   location?: StoredLocation;
   locationPermission?: LocationPermissionState;
   profileCompleted?: boolean;
@@ -209,8 +228,15 @@ export interface ConsumerProfile {
   updatedAt?: FirestoreTimestamp | Date;
 }
 
-// Preference chips shown during onboarding/editing — mirrors the category
-// vocabulary venues use in the Creator webapp.
+// ⚠️ SHARED CONTRACT — this list must match, value for value:
+//   1. VENUE_CATEGORIES in the Creator webapp's CreateVenue.js (what owners pick)
+//   2. the output values of CATEGORY_ALIASES in refreshDistrictVenues.js
+//      (what auto-created stubs are tagged with)
+//
+// Drift here does not fail loudly — it silently hides venues. applyProFilters
+// is lenient only toward venues with NO tags at all, so a value that exists in
+// one list but not another reads as a deliberate non-match and the venue is
+// excluded from every filtered deck.
 export const VENUE_CATEGORIES = [
   'bar',
   'club',
@@ -220,7 +246,33 @@ export const VENUE_CATEGORIES = [
   'wine bar',
   'rooftop',
   'live music',
+  'restaurant',
+  'sports bar',
+  'adult entertainment',
 ] as const;
+
+export type VenueCategory = (typeof VENUE_CATEGORIES)[number];
+
+// Preference chips shown during onboarding / profile editing. A SUBSET of the
+// canonical vocabulary, not a second vocabulary: 'adult entertainment' is
+// excluded because a "favourite categories" picker is the wrong surface to ask
+// that on. It stays in VENUE_CATEGORIES so venues carrying it still match, and
+// in FILTER_GENRE_OPTIONS so a user can seek or avoid it deliberately in the
+// deck filters.
+export const ONBOARDING_CATEGORY_CHIPS: readonly VenueCategory[] = VENUE_CATEGORIES.filter(
+  (category) => category !== 'adult entertainment'
+);
+
+// Dietary needs — set on the profile and used as a discovery filter. Values are
+// lowercase for matching against venue.dietaryOptions; labels are display copy.
+export const DIETARY_OPTIONS: { value: string; label: string }[] = [
+  { value: 'halal', label: 'Halal' },
+  { value: 'vegetarian', label: 'Vegetarian' },
+  { value: 'vegan', label: 'Vegan' },
+  { value: 'gluten-free', label: 'Gluten-free' },
+  { value: 'kosher', label: 'Kosher' },
+  { value: 'pescatarian', label: 'Pescatarian' },
+];
 
 export const GENDER_OPTIONS: { value: Gender; label: string }[] = [
   { value: 'male', label: 'Male' },
@@ -240,6 +292,9 @@ export interface VenueFilters {
   genres: string[];
   dressCode: string | null;
   maxCover: number | null; // ZAR ceiling; 0 = free entry only
+  // ≥1-overlap match against venue.dietaryOptions. Free-tier (a need, not a
+  // premium nicety); pre-filled from the user's profile dietaryPreferences.
+  dietary: string[];
 }
 
 export const EMPTY_FILTERS: VenueFilters = {
@@ -247,6 +302,7 @@ export const EMPTY_FILTERS: VenueFilters = {
   genres: [],
   dressCode: null,
   maxCover: null,
+  dietary: [],
 };
 
 // One chip list spanning venue categories AND music genres — a venue passes

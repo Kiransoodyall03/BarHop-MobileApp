@@ -14,6 +14,7 @@ import { useConsumerSubscription } from '../hooks/useConsumerSubscription';
 import { useTheme, useThemedStyles } from '../theme/ThemeContext';
 import type { ThemeColors } from '../theme/colors';
 import {
+  DIETARY_OPTIONS,
   DISTANCE_OPTIONS,
   DRESS_CODE_OPTIONS,
   EMPTY_FILTERS,
@@ -70,6 +71,15 @@ export default function VenueFiltersModal({
     }));
   }
 
+  function toggleDietary(value: string) {
+    setDraft((d) => ({
+      ...d,
+      dietary: d.dietary.includes(value)
+        ? d.dietary.filter((x) => x !== value)
+        : [...d.dietary, value],
+    }));
+  }
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.backdrop}>
@@ -108,6 +118,16 @@ export default function VenueFiltersModal({
                     maxDistanceKm: d.maxDistanceKm === Number(value) ? null : Number(value),
                   }))
                 }
+              />
+            </View>
+
+            {/* ── Dietary — free tier (a need, pre-filled from the profile) ── */}
+            <View pointerEvents={interactive ? 'auto' : 'none'}>
+              <ChipSelect
+                label="Dietary needs"
+                options={DIETARY_OPTIONS}
+                selected={draft.dietary}
+                onToggle={toggleDietary}
               />
             </View>
 

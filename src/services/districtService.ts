@@ -225,7 +225,9 @@ export function inflateStub(stub: StubVenue): VenueWithId {
     category: stub.category,
     categories: stub.categories,
     tagline: '',
-    images: [], // Premium field — see the note above
+    // One cached Foursquare photo when the refresh function captured one;
+    // otherwise empty, and VenueCard shows the 🍸 fallback.
+    images: stub.photoUrl ? [stub.photoUrl] : [],
     video: null,
     hours: NO_HOURS,
     offers: [],

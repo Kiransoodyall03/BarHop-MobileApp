@@ -82,7 +82,7 @@ export default function ItineraryScreen() {
 
   const stops = useMemo(() => itinerary?.stops ?? [], [itinerary]);
   const mappedStops = useMemo(() => stops.filter((stop) => stop.coords), [stops]);
-  // Finite for free (3) AND pro (5); Infinity for elite.
+  // Finite on both tiers — free (3) and pro (5).
   const atCap = stops.length >= maxItineraryStops;
 
   // Keep every pin (and route) in frame as the plan evolves.

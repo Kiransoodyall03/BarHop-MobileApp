@@ -11,6 +11,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { Ionicons } from '@expo/vector-icons';
 import VibeCheckBadge from './VibeCheckBadge';
+import { useDistanceLabel } from '../hooks/useDistanceLabel';
 import { getOpenStatus } from '../utils/openStatus';
 import { useTheme, useThemedStyles } from '../theme/ThemeContext';
 import type { ThemeColors } from '../theme/colors';
@@ -25,7 +26,7 @@ interface MediaItem {
  * Full-bleed venue card, front face only (details live in VenueDetailsSheet):
  * stories-style media stack (all images + the venue video as the final slide,
  * tap left third = back / elsewhere = forward), live Open/Closed badge,
- * name (+ verified check), categories, address, and a distance placeholder.
+ * name (+ verified check), categories, address, and distance from the user.
  */
 export default function VenueCard({ venue }: { venue: VenueWithId }) {
   const { colors } = useTheme();
@@ -58,6 +59,7 @@ export default function VenueCard({ venue }: { venue: VenueWithId }) {
     .filter((chip): chip is string => Boolean(chip))
     .slice(0, 3);
   const openStatus = getOpenStatus(venue.hours);
+  const distanceLabel = useDistanceLabel(venue);
 
   const overlay = (
     <>
@@ -145,8 +147,7 @@ export default function VenueCard({ venue }: { venue: VenueWithId }) {
             ) : (
               <Text style={styles.statusUnknown}>Hours TBD</Text>
             )}
-            {/* Distance placeholder — wired up once venue geocoding lands. */}
-            <Text style={styles.distance}>— km away</Text>
+            {distanceLabel && <Text style={styles.distance}>{distanceLabel}</Text>}
           </View>
 
           <Text style={styles.address} numberOfLines={1}>

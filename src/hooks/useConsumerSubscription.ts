@@ -19,11 +19,16 @@ export interface TierLimits {
   maxItineraryStops: number;
 }
 
-// Free: 3/3/3 · Pro: 7/7/5 · Elite: unlimited.
+// Free: 3/3/3 · Pro: 7/7/5.
+//
+// maxMembersPerSquad is mirrored SERVER-SIDE by squadMemberCap() in
+// firestore.rules, which derives the cap from the host's pinned consumerTier
+// (not the squad doc's own tier field, which a client could forge). Changing
+// the 3 or the 7 here without changing it there means writes that the UI allows
+// get rejected by rules.
 export const TIER_LIMITS: Record<ConsumerTier, TierLimits> = {
   free: { maxSquads: 3, maxMembersPerSquad: 3, maxItineraryStops: 3 },
   pro: { maxSquads: 7, maxMembersPerSquad: 7, maxItineraryStops: 5 },
-  elite: { maxSquads: Infinity, maxMembersPerSquad: Infinity, maxItineraryStops: Infinity },
 };
 
 export function limitsForTier(tier: ConsumerTier | undefined): TierLimits {
@@ -38,15 +43,14 @@ export function tierLabel(tier: ConsumerTier | undefined): string {
 
 export interface ConsumerSubscription extends TierLimits {
   tier: ConsumerTier;
-  isPro: boolean; // pro OR elite
-  isElite: boolean;
+  isPro: boolean;
   // Pro feature flags
-  showAds: boolean; // false for pro/elite — deck skips ad injection
+  showAds: boolean; // false for Pro — deck skips ad injection
   hasUnlimitedSwipes: boolean;
   hasAdvancedFilters: boolean;
   canRewind: boolean;
   hasVibeCheck: boolean;
-  /** CTA copy for upsells: free users get pitched Pro, Pro users Elite. */
+  /** CTA copy for upsells. Pro is the top tier, so Pro users get no pitch. */
   upgradeCtaLabel: string;
   // Usage comparators — pass the caller's current counts.
   canCreateMoreSquads: (activeSquadCount: number) => boolean;
@@ -61,8 +65,7 @@ export function useConsumerSubscription(): ConsumerSubscription {
   // RevenueCat webhook (clients can't set it; see firestore.rules). But that
   // write lands a beat after payment, so a live local entitlement promotes a
   // 'free' profile to Pro immediately. Deliberately one-directional: it can
-  // upgrade, never downgrade, so it can't strip access from an 'elite' user or
-  // fight the server's view.
+  // upgrade, never downgrade, so it can't fight the server's view.
   const storedTier: ConsumerTier = profile?.consumerTier ?? 'free';
   const hasLocalPro = useSyncExternalStore(subscribeToEntitlement, getEntitlementSnapshot);
 
@@ -74,18 +77,19 @@ export function useConsumerSubscription(): ConsumerSubscription {
   const tier: ConsumerTier =
     storedTier === 'free' && (hasLocalPro || hasVoucherPro) ? 'pro' : storedTier;
   const limits = limitsForTier(tier);
-  const isPro = tier === 'pro' || tier === 'elite';
+  const isPro = tier === 'pro';
 
   return {
     tier,
     isPro,
-    isElite: tier === 'elite',
     showAds: !isPro,
     hasUnlimitedSwipes: isPro,
     hasAdvancedFilters: isPro,
     canRewind: isPro,
     hasVibeCheck: isPro,
-    upgradeCtaLabel: tier === 'pro' ? 'Upgrade to Elite' : 'Upgrade to Pro',
+    // Pro is the top tier, and a Pro user CAN still hit a cap (5 itinerary
+    // stops). They get a dismissal, not a pitch for a tier that doesn't exist.
+    upgradeCtaLabel: isPro ? 'Got it' : 'Upgrade to Pro',
     ...limits,
     canCreateMoreSquads: (activeSquadCount) => activeSquadCount < limits.maxSquads,
     canAddMoreMembers: (memberCount) => memberCount < limits.maxMembersPerSquad,

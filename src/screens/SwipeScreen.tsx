@@ -28,6 +28,7 @@ import {
 } from '../services/venueService';
 import {
   recordSwipe,
+  recordVenueClickThrough,
   recordSquadSwipeActivity,
   undoSwipeRecord,
 } from '../services/swipeService';
@@ -124,6 +125,10 @@ export default function SwipeScreen() {
   // Match celebration state — driven by the squad listener so EVERY member's
   // device fires the modal, not just the final swiper's.
   const [matchVenue, setMatchVenue] = useState<VenueWithId | null>(null);
+  // Venues whose details sheet has already been counted this session. Without
+  // this, swiping up on the same card repeatedly inflates the owner's "Profile
+  // Expansions" KPI into meaninglessness.
+  const countedClickThroughsRef = useRef<Set<string>>(new Set());
   const seenMatchesRef = useRef<Set<string>>(new Set());
   const seededSquadRef = useRef<string | null>(null);
 
@@ -205,6 +210,16 @@ export default function SwipeScreen() {
       if (matchedItem) setMatchVenue(matchedItem.venue);
     }
   }, [squadId, squad, matchedVenueIds, deck]);
+
+  // Opening the details sheet IS the "profile expansion" the B2B dashboard
+  // reports. Counted once per venue per session, and never allowed to block the
+  // sheet from opening.
+  const openVenueDetails = useCallback((venue: VenueWithId) => {
+    setDetailsVenue(venue);
+    if (countedClickThroughsRef.current.has(venue.id)) return;
+    countedClickThroughsRef.current.add(venue.id);
+    void recordVenueClickThrough(venue.id);
+  }, []);
 
   const handleSwiped = useCallback(
     (item: DeckItem, direction: SwipeDirection) => {
@@ -367,7 +382,7 @@ export default function SwipeScreen() {
           items={deck}
           onSwiped={handleSwiped}
           onDeckEmpty={() => setAllSwiped(true)}
-          onSwipeUp={setDetailsVenue}
+          onSwipeUp={openVenueDetails}
         />
       </View>
 

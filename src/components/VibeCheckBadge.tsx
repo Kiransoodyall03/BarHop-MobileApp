@@ -4,16 +4,38 @@ import { useConsumerSubscription } from '../hooks/useConsumerSubscription';
 import { BUSYNESS_META, type Venue } from '../types';
 
 /**
+ * A busyness reading older than this is treated as absent. The owner sets it by
+ * hand from the Creator dashboard and there is nothing that clears it at close,
+ * so without an expiry a Friday-night "lively" would still be showing on
+ * Sunday. The Creator dashboard applies the same window to its own control.
+ */
+const STALE_AFTER_MS = 4 * 60 * 60 * 1000;
+
+function isFresh(updatedAt: Venue['busynessUpdatedAt']): boolean {
+  if (!updatedAt) return false; // written alongside every real update
+  const ms =
+    updatedAt instanceof Date
+      ? updatedAt.getTime()
+      : typeof updatedAt === 'object' && 'seconds' in updatedAt
+        ? updatedAt.seconds * 1000
+        : 0;
+  return ms > 0 && Date.now() - ms < STALE_AFTER_MS;
+}
+
+/**
  * "Vibe Check" — live venue busyness fed from the B2B side
- * (venues/{venueId}.currentBusyness). Pro/Elite see the real status; free
- * users see a locked teaser. Hidden entirely when the venue has no data.
- * Reads the tier itself via useConsumerSubscription — no prop drilling
- * through the swipe deck.
+ * (venues/{venueId}.currentBusyness). Pro sees the real status; free users see
+ * a locked teaser. Hidden entirely when the venue has no data, or when that
+ * data is stale.
+ *
+ * Staleness is checked BEFORE the tier branch on purpose: a free user must not
+ * be teased into paying for a reading that would turn out to be two days old.
  */
 export default function VibeCheckBadge({ venue }: { venue: Venue }) {
   const { hasVibeCheck } = useConsumerSubscription();
   const busyness = venue.currentBusyness;
   if (!busyness || !BUSYNESS_META[busyness]) return null;
+  if (!isFresh(venue.busynessUpdatedAt)) return null;
 
   if (!hasVibeCheck) {
     return (

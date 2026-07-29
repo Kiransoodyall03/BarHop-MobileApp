@@ -101,6 +101,37 @@ export async function recordSquadSwipeActivity(
 }
 
 /**
+ * Records a profile expansion — the venue details sheet being opened. Feeds the
+ * B2B dashboard's "Profile Expansions" KPI.
+ *
+ * Deliberately fire-and-forget: this is a telemetry nicety, and a failed write
+ * must never block or error the sheet the user is trying to read.
+ *
+ * NOTE there is no matching writer for `groupMatches`, and there must not be.
+ * A squad match is ONE event that every member's device observes independently
+ * (each derives it from the shared squad doc), so a client-side counter would
+ * inflate it by member count. It is written server-side by the onSquadMatch
+ * trigger instead, and is excluded from the client-writable rule entirely.
+ */
+export async function recordVenueClickThrough(venueId: string): Promise<void> {
+  if (skipAnalytics(venueId)) return;
+  const now = new Date();
+  const localMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  try {
+    await setDoc(
+      doc(db, 'venues', venueId, 'analytics', localDayKey(now)),
+      {
+        date: Timestamp.fromDate(localMidnight),
+        clickThroughs: increment(1),
+      },
+      { merge: true }
+    );
+  } catch (error) {
+    console.warn('[swipeService] clickThrough write failed:', error);
+  }
+}
+
+/**
  * Pro Rewind: deletes the personal history record for a rewound swipe so the
  * venue can be swiped on again (and reappears in future solo decks). Venue
  * analytics deliberately keep both interactions — owner metrics count

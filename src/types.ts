@@ -79,6 +79,10 @@ export interface Venue {
   dressCode?: 'casual' | 'smart-casual' | 'formal';
   coverCharge?: number; // ZAR; 0 = free entry
   currentBusyness?: 'quiet' | 'lively' | 'at-capacity'; // live "Vibe Check"
+  // Written by the Creator dashboard alongside every currentBusyness update.
+  // The reading is manual and nothing clears it at close, so VibeCheckBadge
+  // treats anything older than 4h as absent rather than showing a stale vibe.
+  busynessUpdatedAt?: FirestoreTimestamp | Date;
   // Dietary options the venue caters to (halal/vegan/…), lowercase. Written by
   // the Creator webapp / sourced from Foursquare attributes. Matched against
   // VenueFilters.dietary; venues without it are treated leniently (kept).
@@ -189,7 +193,15 @@ export type LocationPermissionState = 'granted' | 'denied' | 'skipped';
 // `subscriptionTier` (trial/starter/pro/enterprise) that venue owners carry
 // on the same users/{uid} documents — the two billing systems must not
 // collide. Absent field ⇒ 'free'.
-export type ConsumerTier = 'free' | 'pro' | 'elite';
+// Consumer billing tiers. Written ONLY by the revenueCatWebhook Cloud Function.
+//
+// Adding a tier here is a THREE-repo change, not a one-line one: it also needs a
+// RevenueCat product/entitlement, a mapping in revenueCatWebhook, and an arm in
+// squadMemberCap() in firestore.rules — which fails unrecognised tiers closed to
+// the free cap of 3. An 'elite' tier previously sat here granting unlimited
+// squads, members and itinerary stops with nothing able to write it; it was
+// removed rather than specced.
+export type ConsumerTier = 'free' | 'pro';
 
 // Consumer-side shape of users/{uid}. The same collection also holds B2B
 // venue owners (see the webapp's User type) — consumer writes always merge

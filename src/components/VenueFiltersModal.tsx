@@ -19,9 +19,18 @@ import {
   DRESS_CODE_OPTIONS,
   EMPTY_FILTERS,
   FILTER_GENRE_OPTIONS,
+  FREE_GENRE_OPTIONS,
   MAX_COVER_OPTIONS,
   type VenueFilters,
 } from '../types';
+import { sanitizeFiltersForTier } from '../utils/venueFilters';
+
+// The genre chips that stay behind the paywall. Derived, never hand-written, so
+// a new category added to the shared vocabulary lands on one side or the other
+// automatically instead of silently disappearing from the sheet.
+const PRO_GENRE_OPTIONS = FILTER_GENRE_OPTIONS.filter(
+  (genre) => !FREE_GENRE_OPTIONS.includes(genre)
+);
 
 interface VenueFiltersModalProps {
   visible: boolean;
@@ -35,9 +44,10 @@ interface VenueFiltersModalProps {
 }
 
 /**
- * Deck filters sheet. Distance is free-tier; Genres/Dress Code/Max Cover are
- * Pro — locked sections stay visible behind a padlock overlay that raises the
- * upsell. In squad mode only the host edits (members get readOnly).
+ * Deck filters sheet. Distance, dietary and the four FREE_GENRE_OPTIONS venue
+ * types are free-tier; the remaining genres, Dress Code and Max Cover are Pro —
+ * locked sections stay visible behind a padlock overlay that raises the upsell.
+ * In squad mode only the host edits (members get readOnly).
  */
 export default function VenueFiltersModal({
   visible,
@@ -131,12 +141,22 @@ export default function VenueFiltersModal({
               />
             </View>
 
+            {/* ── Venue type — free tier (a taste of the genre filter) ── */}
+            <View pointerEvents={interactive ? 'auto' : 'none'}>
+              <ChipSelect
+                label="Venue type (at least one match)"
+                options={FREE_GENRE_OPTIONS.map((g) => ({ value: g, label: g }))}
+                selected={draft.genres}
+                onToggle={toggleGenre}
+              />
+            </View>
+
             {/* ── Pro sections ── */}
             <View>
               <View pointerEvents={interactive && !locked ? 'auto' : 'none'}>
                 <ChipSelect
-                  label="Music & Vibe (at least one match)"
-                  options={FILTER_GENRE_OPTIONS.map((g) => ({ value: g, label: g }))}
+                  label="More vibes & music"
+                  options={PRO_GENRE_OPTIONS.map((g) => ({ value: g, label: g }))}
                   selected={draft.genres}
                   onToggle={toggleGenre}
                 />
@@ -167,7 +187,7 @@ export default function VenueFiltersModal({
                 <Pressable style={styles.lockOverlay} onPress={() => setUpsellVisible(true)}>
                   <View style={styles.lockPill}>
                     <Ionicons name="lock-closed" size={15} color={colors.text} />
-                    <Text style={styles.lockPillText}>Pro filters — tap to unlock</Text>
+                    <Text style={styles.lockPillText}>More filters — tap to unlock</Text>
                   </View>
                 </Pressable>
               )}
@@ -185,7 +205,10 @@ export default function VenueFiltersModal({
               <Pressable
                 style={({ pressed }) => [styles.applyButton, pressed && styles.dim]}
                 onPress={() => {
-                  onApply(draft);
+                  // Whoever AUTHORS filters must hold the entitlement. Also
+                  // covers a free host writing to the squad doc — members then
+                  // inherit an already-legal set.
+                  onApply(sanitizeFiltersForTier(draft, hasAdvancedFilters));
                   onClose();
                 }}
               >

@@ -16,6 +16,7 @@ import MatchModal from '../components/MatchModal';
 import VenueDetailsSheet from '../components/VenueDetailsSheet';
 import VenueFiltersModal from '../components/VenueFiltersModal';
 import ProUpsellModal from '../components/ProUpsellModal';
+import SquadSwitcherSheet from '../components/SquadSwitcherSheet';
 import OutOfSwipesModal, { SWIPES_PER_REWARD } from '../ads/OutOfSwipesModal';
 import { injectAdCards } from '../ads/injectAds';
 import { useAuth } from '../context/AuthContext';
@@ -23,7 +24,7 @@ import { useSquad } from '../context/SquadContext';
 import { useConsumerSubscription } from '../hooks/useConsumerSubscription';
 import {
   fetchDeckVenues,
-  fetchPublishedVenues,
+  fetchSquadDeckVenues,
   fetchSwipedVenueIds,
 } from '../services/venueService';
 import {
@@ -33,11 +34,17 @@ import {
   undoSwipeRecord,
 } from '../services/swipeService';
 import {
+  ensureDeckDistricts,
   recordSquadSwipe,
   removeSquadLike,
   updateSquadFilters,
 } from '../services/squadService';
-import { applyProFilters, countActiveFilters, normalizeFilters } from '../utils/venueFilters';
+import {
+  applyProFilters,
+  countActiveFilters,
+  normalizeFilters,
+  sanitizeFiltersForTier,
+} from '../utils/venueFilters';
 import { useTheme, useThemedStyles } from '../theme/ThemeContext';
 import type { ThemeColors } from '../theme/colors';
 import {
@@ -57,10 +64,11 @@ const FREE_SWIPES_PER_SESSION = 15;
 
 export default function SwipeScreen() {
   const { user, profile } = useAuth();
-  const { squad, squadId, isInSquad, isHost, matchedVenueIds } = useSquad();
+  const { squad, squadId, mySquads, isInSquad, isHost, matchedVenueIds, switchTo } = useSquad();
   const {
     showAds,
     hasUnlimitedSwipes,
+    hasAdvancedFilters,
     canRewind,
     upgradeCtaLabel,
   } = useConsumerSubscription();
@@ -82,6 +90,7 @@ export default function SwipeScreen() {
   // inherited live by every member so decks stay identical for consensus.
   const [soloFilters, setSoloFilters] = useState<VenueFilters>(EMPTY_FILTERS);
   const [filtersVisible, setFiltersVisible] = useState(false);
+  const [switcherVisible, setSwitcherVisible] = useState(false);
 
   // Pre-fill the solo deck's dietary filter from the user's saved profile
   // preference — ONCE, and only if they haven't already set a dietary filter
@@ -97,13 +106,25 @@ export default function SwipeScreen() {
     }
   }, [profile?.dietaryPreferences]);
 
-  const activeFilters = isInSquad ? normalizeFilters(squad?.filters) : soloFilters;
+  // Squad filters are NEVER sanitized: every member must apply the identical
+  // host-set filters or their decks diverge and consensus matching breaks. Solo
+  // filters are, so a lapsed subscriber stops getting Pro dimensions for free.
+  const activeFilters = isInSquad
+    ? normalizeFilters(squad?.filters)
+    : sanitizeFiltersForTier(soloFilters, hasAdvancedFilters);
   // Reload key: changes ONLY when the applied filters change (a squad's likes
   // updates must not churn the deck).
   const filtersKey = useMemo(() => JSON.stringify(activeFilters), [activeFilters]);
   const locationKey = profile?.location
     ? `${profile.location.latitude},${profile.location.longitude}`
     : 'none';
+  // Sorted so a reordered-but-identical array doesn't churn the deck. A plain
+  // string, not the array itself — that has a fresh identity on every likes
+  // snapshot and would reload the deck on every squad swipe.
+  const deckDistrictsKey = useMemo(
+    () => [...(squad?.deckDistrictIds ?? [])].sort().join(','),
+    [squad?.deckDistrictIds]
+  );
 
   // ── Free-tier swipe budget + rewarded gateway ─────────────────────────────
   const [remainingSwipes, setRemainingSwipes] = useState(FREE_SWIPES_PER_SESSION);
@@ -132,8 +153,15 @@ export default function SwipeScreen() {
   const seenMatchesRef = useRef<Set<string>>(new Set());
   const seededSquadRef = useRef<string | null>(null);
 
+  // Guards against a slow response painting over a newer one: switching squads
+  // A→B→A fires three overlapping loads and they can settle out of order.
+  const loadSeqRef = useRef(0);
+
   const loadDeck = useCallback(async () => {
     if (!user) return;
+    const seq = ++loadSeqRef.current;
+    const isCurrent = () => seq === loadSeqRef.current;
+
     setDeck(null);
     setLoadError(null);
     setAllSwiped(false);
@@ -141,18 +169,15 @@ export default function SwipeScreen() {
     try {
       let venues: VenueWithId[];
       if (isInSquad) {
-        // Squad mode: identical deck for every member (host filters applied
-        // below, same for everyone) — personal history does not apply.
+        // Squad mode: ONE identical deck for every member — personal swipe
+        // history deliberately does not apply.
         //
-        // Deliberately owner-created venues ONLY: auto-created stubs are
-        // resolved from the viewer's own district, and squad members routinely
-        // plan a night out from opposite sides of the city. Passing each
-        // member's location here would hand them different decks and silently
-        // break consensus matching (a venue only matches when EVERY member
-        // right-swipes it — impossible if some never see the card). Enabling
-        // stubs for squads needs the HOST's district stored on the squad doc,
-        // the same way `filters` already is.
-        venues = await fetchPublishedVenues();
+        // The deck is the union of every member's nearby districts (stored on
+        // the squad doc) plus published venues, so it is the culmination of all
+        // members' solo stacks. Read from the shared doc, never recomputed from
+        // this viewer's location: consensus matching needs identical decks, and
+        // a card one member never saw can never match.
+        venues = await fetchSquadDeckVenues(squad?.deckDistrictIds ?? []);
       } else {
         const [allVenues, swipedIds] = await Promise.all([
           fetchDeckVenues(profile?.location ?? null),
@@ -162,26 +187,37 @@ export default function SwipeScreen() {
         venues = allVenues.filter((venue) => !swipedIds.has(venue.id));
       }
       // Distance is the ONE filter that depends on the viewer's own location,
-      // so in a squad it must be skipped: applying the host's maxDistanceKm
-      // against each member's location would filter the shared deck differently
-      // per member and break consensus (same reason the deck is owner-only
-      // above). Genre/dress/cover are venue properties — identical for everyone
-      // — so they still apply. Honoring distance in a squad needs the host's
-      // location on the squad doc; deferred with that enhancement.
+      // so in a squad it stays off. The squad deck spans every member's
+      // districts, so there is no single origin to measure from — and measuring
+      // from each member's own location would filter the shared deck
+      // differently per member, which is exactly the consensus break the union
+      // above exists to avoid. Genre/dress/cover are venue properties,
+      // identical for everyone, so they still apply.
       const filterLocation = isInSquad ? null : profile?.location ?? null;
       const filtered = applyProFilters(
         venues,
         JSON.parse(filtersKey) as VenueFilters,
         filterLocation
       );
-      // Ads: skipped entirely for Pro/Elite (showAds false) and in Expo Go.
+      if (!isCurrent()) return;
+      // Ads: skipped entirely for Pro (showAds false) and in Expo Go.
       setDeck(injectAdCards(filtered, 8, showAds));
     } catch (error) {
       console.warn('[SwipeScreen] failed to load venues:', error);
+      if (!isCurrent()) return;
       setLoadError('Could not load venues. Check your connection and try again.');
     }
+
+    // Contribute this member's districts to the shared squad deck if they
+    // aren't already there. Fire-and-forget AFTER the deck paints: it backfills
+    // squads created before deckDistrictIds existed, and picks up a member who
+    // has moved. A no-op write in the steady state, and the listener reloads
+    // the deck when it does land.
+    if (isInSquad && squadId && isCurrent()) {
+      void ensureDeckDistricts(squadId, squad?.deckDistrictIds, profile?.location ?? null);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, isInSquad, filtersKey, showAds, locationKey]);
+  }, [user, isInSquad, squadId, deckDistrictsKey, filtersKey, showAds, locationKey]);
 
   useEffect(() => {
     loadDeck();
@@ -341,14 +377,22 @@ export default function SwipeScreen() {
               <Text style={styles.pillText}>🔥 {remainingSwipes} left</Text>
             </View>
           )}
-          {isInSquad && squad ? (
-            <View style={styles.pill}>
+          {/* Solo/squad switcher. Hidden entirely for users with no squads —
+              there is nothing to switch between, and solo is the only mode. */}
+          {mySquads.length > 0 && (
+            <Pressable
+              style={({ pressed }) => [styles.pill, pressed && styles.pillPressed]}
+              onPress={() => setSwitcherVisible(true)}
+              hitSlop={6}
+            >
               <Text style={styles.pillText}>
-                🍻 Squad · {squad.members.length}{' '}
-                {squad.members.length === 1 ? 'member' : 'members'}
+                {isInSquad && squad
+                  ? `🍻 ${squad.pin} · ${squad.members.length}`
+                  : '🕺 Solo'}
               </Text>
-            </View>
-          ) : null}
+              <Ionicons name="chevron-down" size={13} color={colors.text} />
+            </Pressable>
+          )}
           <Pressable style={styles.filterButton} onPress={() => setFiltersVisible(true)}>
             <Ionicons name="options-outline" size={18} color={colors.text} />
             {activeFilterCount > 0 && (
@@ -407,9 +451,14 @@ export default function SwipeScreen() {
           <Text style={styles.emptySubtitle}>
             {activeFilterCount > 0
               ? 'Nothing else matches the current filters. Loosen them or check back later.'
-              : isInSquad
-                ? "Your squad has seen every spot in town. Fingers crossed a match landed."
-                : "You've seen every spot in town. Check back soon — new venues join BarHop all the time."}
+              : isInSquad && !squad?.deckDistrictIds?.length
+                ? // Nobody in the squad has a stored location, so there are no
+                  // districts to draw venues from — distinct from having seen
+                  // them all, and fixable by the user.
+                  'Turn on location (Profile → Location) so BarHop can find spots near your squad.'
+                : isInSquad
+                  ? 'Your squad has seen every spot in town. Fingers crossed a match landed.'
+                  : "You've seen every spot in town. Check back soon — new venues join BarHop all the time."}
           </Text>
           <Pressable style={styles.retryButton} onPress={loadDeck}>
             <Text style={styles.retryButtonText}>Refresh</Text>
@@ -451,6 +500,15 @@ export default function SwipeScreen() {
       )}
 
       <VenueDetailsSheet venue={detailsVenue} onClose={() => setDetailsVenue(null)} />
+
+      <SquadSwitcherSheet
+        visible={switcherVisible}
+        squads={mySquads}
+        activeSquadId={squadId}
+        currentUserId={user?.uid}
+        onSelect={switchTo}
+        onClose={() => setSwitcherVisible(false)}
+      />
 
       <VenueFiltersModal
         visible={filtersVisible}
@@ -504,7 +562,11 @@ const createStyles = (colors: ThemeColors) =>
       alignItems: 'center',
     },
     headerPills: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    pillPressed: { opacity: 0.7 },
     pill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
       backgroundColor: colors.chipActiveBg,
       borderColor: colors.primary,
       borderWidth: 1,

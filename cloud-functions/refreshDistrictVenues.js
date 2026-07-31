@@ -26,17 +26,32 @@
 //     20 districts × 1/day × 30 days = 600 calls/month ≈ $1.50
 //     (first 500 Pro calls are free; ≤16 districts is free outright)
 //
-// ── Pricing hazard: never request premium fields ────────────────────────────
+// ── Pricing: this function runs at PREMIUM rate, deliberately ───────────────
 //
-// Foursquare bills Search as a PRO call only while it asks for default fields.
-// Passing a `fields` parameter containing any premium-tier field (photos,
-// tips, hours, rating) reprices EVERY call from $15.00 CPM to $18.75 CPM with
-// NO free allowance. Fetching photos for 20 districts × 50 venues daily would
-// cost ~$560/month — roughly 375× this function's entire budget.
+// Foursquare bills Search at PRO rate while it requests only default fields
+// (10 000 free calls/month, then $15.00 CPM). Naming ANY premium field in
+// `fields` — photos, tips, hours, ratings — reprices the call to PREMIUM
+// ($18.75 CPM, billed from the first call, no free allowance).
 //
-// That is why stub cards ship with no images and no hours. Media arrives when
-// an owner claims the venue in the Creator webapp, which is the whole
-// incentive for them to claim it.
+// We accept that, because a deck of photo-less cards does not work. Note the
+// cost depends entirely on WHICH approach you take, and the difference is three
+// orders of magnitude:
+//
+//   THIS approach — photos inline via `fields` on the district search.
+//   Still ONE call per district per day; only the rate changes.
+//       11 districts × 30 days = 330 calls ≈ $6.19/month
+//
+//   The trap — a separate Place Photos call per venue.
+//       20 districts × 50 venues × 30 days = 30 000 calls ≈ $562/month
+//
+// So: never fetch photos per venue. Fetching them per DISTRICT is cheap, and is
+// what the `fields` list below does.
+//
+// Hours and ratings are still NOT requested. They are premium too, but unlike
+// photos they change fast enough that a daily snapshot would be misleading —
+// the card handles their absence ("Hours TBD"). Adding them costs nothing extra
+// now that the call is already Premium, but only add them if the staleness is
+// acceptable.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const { onSchedule } = require('firebase-functions/v2/scheduler');
@@ -61,8 +76,30 @@ const NIGHTLIFE_CATEGORY_IDS = ['4d4b7105d754a06376d81259']; // Nightlife Spot (
 // tail and log loudly.
 const MAX_DISTRICTS_PER_RUN = 40;
 
-// Keep snapshots comfortably inside Firestore's 1 MiB document limit.
+// Keep snapshots comfortably inside Firestore's 1 MiB document limit. A photo
+// URL adds ~120 bytes per venue, so 60 venues ≈ 7 KB — nowhere near the ceiling.
 const MAX_VENUES_PER_DISTRICT = 60;
+
+// Explicit field list. ⚠️ Passing `fields` at all turns OFF the defaults, so
+// every field the stub needs must be named here — omit `name` and every venue
+// comes back nameless. `photos` is the one premium entry and the reason this
+// call bills at Premium rate (see the header).
+const PLACE_FIELDS = [
+  'fsq_place_id',
+  'name',
+  'location',
+  'categories',
+  'latitude',
+  'longitude',
+  'photos',
+].join(',');
+
+// Foursquare photo URLs are assembled as `${prefix}${size}${suffix}`. A bounded
+// size rather than `original`: South African mobile data is among the most
+// expensive on the continent, and an image-heavy swipe deck pulling 2000px
+// originals is a real uninstall driver. 800px covers a full-bleed card on a 3x
+// phone without paying for detail nobody sees.
+const PHOTO_SIZE = '800x800';
 
 const SNAPSHOT_TTL_HOURS = 36; // > the 24h refresh, so a skipped run isn't fatal
 
@@ -164,8 +201,9 @@ async function searchDistrict(district, apiKey) {
     radius: String(district.radiusM),
     limit: String(Math.min(MAX_VENUES_PER_DISTRICT, 50)), // Foursquare caps limit at 50
     fsq_category_ids: (district.categoryIds ?? NIGHTLIFE_CATEGORY_IDS).join(','),
-    // NO `fields` parameter. Adding one that names a premium field reprices
-    // this call from Pro to Premium. See the pricing hazard note in the header.
+    // Names `photos`, so this call bills at Premium rate — one call per
+    // district, ~$6/month across 11 districts. See the header.
+    fields: PLACE_FIELDS,
   });
 
   const response = await fetch(`${PLACES_SEARCH_URL}?${params}`, {
@@ -208,17 +246,75 @@ function toStubVenue(place) {
     return null;
   }
 
+  // COMPLIANCE: X18 places never enter the shared deck. An owner reaches the
+  // deck only by claiming a venue in the Creator webapp, which puts the FPB
+  // distributor-licence terms in front of them (Settings → Legal & Compliance);
+  // an auto-created stub bypasses that entirely. Distinct from the taxonomy
+  // question below — this is a licensing gate, not a vocabulary gap.
+  if (isAdultVenue(place.categories)) return null;
+
   const categories = normalizeCategories(place.categories);
+
+  const photoUrl = firstPhotoUrl(place.photos);
 
   return {
     placeId,
     name: place.name ?? 'Unnamed venue',
     address: place.location?.formatted_address ?? place.location?.address ?? '',
-    category: categories[0] ?? 'bar',
-    categories: categories.length ? categories : undefined,
+    // OMITTED, never defaulted, when nothing maps. A `category: 'bar'` fallback
+    // used to sit here and silently mislabelled every unmapped nightlife place
+    // — comedy clubs, casinos, hookah bars — as a bar, so all of them matched
+    // the `bar` chip. It also made normalizeCategories' documented contract
+    // unreachable: returning [] is meant to leave a venue untagged so the app's
+    // lenient filter keeps it, but the app unions the singular `category` into
+    // its tag list, so a defaulted value meant no stub was ever untagged.
+    ...(categories.length ? { category: categories[0], categories } : {}),
     latitude,
     longitude,
+    // Absent when the place has no photo — the card falls back to 🍸 rather
+    // than rendering a broken image.
+    ...(photoUrl ? { photoUrl } : {}),
   };
+}
+
+/**
+ * Exactly ONE photo URL for a place, or null.
+ *
+ * Foursquare returns photos as `prefix` + `suffix` halves that the caller joins
+ * around a size. We take the first — Foursquare orders them by its own quality
+ * ranking, so the first is the best available without us scoring anything — and
+ * store the assembled URL so the app never has to know this format.
+ */
+function firstPhotoUrl(photos) {
+  if (!Array.isArray(photos)) return null;
+  for (const photo of photos) {
+    if (photo?.prefix && photo?.suffix) {
+      return `${photo.prefix}${PHOTO_SIZE}${photo.suffix}`;
+    }
+  }
+  return null;
+}
+
+// Foursquare labels that mean "adult entertainment". Matched as substrings
+// against the raw taxonomy, before normalizeCategories drops anything it can't
+// map — the point is to recognise these places, not to categorise them.
+const ADULT_CATEGORY_MARKERS = [
+  'adult',
+  'strip club',
+  'stripclub',
+  "gentlemen's club",
+  'gentlemens club',
+  'sex shop',
+  'brothel',
+];
+
+/** True when any raw Foursquare label marks this as an X18 venue. */
+function isAdultVenue(rawCategories) {
+  return (rawCategories ?? []).some((entry) => {
+    const name = entry?.name?.trim().toLowerCase();
+    if (!name) return false;
+    return ADULT_CATEGORY_MARKERS.some((marker) => name.includes(marker));
+  });
 }
 
 // Foursquare's taxonomy → the app's VENUE_CATEGORIES vocabulary (src/types.ts).
@@ -233,7 +329,7 @@ const CATEGORY_ALIASES = {
   bar: 'bar',
   'beer bar': 'bar',
   'beer garden': 'bar',
-  'sports bar': 'bar',
+  'sports bar': 'sports bar',
   'dive bar': 'bar',
   'hotel bar': 'bar',
   'karaoke bar': 'bar',
@@ -257,6 +353,15 @@ const CATEGORY_ALIASES = {
   'jazz club': 'live music',
   'rock club': 'live music',
   'live music venue': 'live music',
+  // `restaurant` is in BOTH vocabularies but had no alias at all, so no stub
+  // could ever carry it — selecting the restaurant chip excluded every
+  // auto-created venue.
+  restaurant: 'restaurant',
+  'gastro restaurant': 'restaurant',
+  // NOTE: no `adult entertainment` alias, deliberately. Owners can pick that
+  // category in the Creator wizard (it triggers the FPB X18 flow), but stubs
+  // bypass that acceptance entirely — so X18 places are dropped outright by
+  // isAdultVenue() rather than categorised.
 };
 
 const ALIASES_BY_SPECIFICITY = Object.entries(CATEGORY_ALIASES).sort(

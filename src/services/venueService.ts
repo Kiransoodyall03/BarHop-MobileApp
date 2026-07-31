@@ -1,6 +1,11 @@
 import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../firebase/config';
-import { fetchDistrictStubs, isStubVenueId, lookupStubs } from './districtService';
+import {
+  fetchDistrictStubs,
+  fetchStubsForDistricts,
+  isStubVenueId,
+  lookupStubs,
+} from './districtService';
 import type { StoredLocation, Venue, VenueWithId } from '../types';
 
 // Dev sample venues (src/dev/sampleVenues.ts) are seeded with this placeId
@@ -48,6 +53,44 @@ export async function fetchDeckVenues(
     return owned;
   }
 
+  return mergeOwnedWithStubs(owned, stubs);
+}
+
+/**
+ * The SQUAD deck: published venues plus stubs from the union of every member's
+ * districts, which is stored on the squad document.
+ *
+ * Read from the squad doc rather than each viewer's own location on purpose.
+ * Consensus matching requires every member to right-swipe the same venue
+ * (isVenueMatched in types.ts), so a card one member never saw can never match
+ * — resolving districts per-viewer would silently break matching for squads
+ * spread across the city. One shared list means one shared deck.
+ *
+ * An empty list degrades to published venues only, which is what pre-existing
+ * squad documents (created before this field) get until they self-heal.
+ */
+export async function fetchSquadDeckVenues(districtIds: string[]): Promise<VenueWithId[]> {
+  const owned = await fetchPublishedVenues();
+  if (!districtIds.length) return owned;
+
+  let stubs: VenueWithId[] = [];
+  try {
+    stubs = await fetchStubsForDistricts(districtIds);
+  } catch (error) {
+    console.warn('[venueService] squad stub fetch failed:', error);
+    return owned;
+  }
+
+  return mergeOwnedWithStubs(owned, stubs);
+}
+
+/**
+ * Owner venues first, then any stub whose place isn't already claimed. Both
+ * sides key on Foursquare place IDs, so a claimed venue and its stub collide on
+ * exactly that key — and the owner's real card (images, tagline, hours) must
+ * win over the bare stub.
+ */
+function mergeOwnedWithStubs(owned: VenueWithId[], stubs: VenueWithId[]): VenueWithId[] {
   const claimed = new Set(owned.map((v) => v.placeId).filter(Boolean));
   return [...owned, ...stubs.filter((stub) => !claimed.has(stub.placeId))];
 }

@@ -245,25 +245,33 @@ export function inflateStub(stub: StubVenue): VenueWithId {
   };
 }
 
-/**
- * Auto-created venues for the user's district, or [] when they're outside
- * every covered district / the snapshot hasn't been generated yet.
- */
-export async function fetchDistrictStubs(location: {
+/** District IDs covering a location, nearest first. [] when outside all of them. */
+export async function resolveDistrictIds(location: {
   latitude: number;
   longitude: number;
-}): Promise<VenueWithId[]> {
+}): Promise<string[]> {
   const districts = await resolveDistricts(location);
-  if (!districts.length) return [];
+  return districts.map((d) => d.id);
+}
 
-  // Each snapshot is L1/L2-cached, so aggregating a handful of nearby districts
-  // costs little. Fetch in parallel, preserving nearest-first district order.
-  const snapshots = await Promise.all(districts.map((d) => fetchSnapshot(d.id)));
+/**
+ * Auto-created venues for an explicit list of districts, in the order given.
+ *
+ * Split out from fetchDistrictStubs so a SQUAD deck can be built from the union
+ * of every member's districts (stored on the squad doc) rather than from the
+ * viewer's own location — members swiping different decks silently breaks
+ * consensus matching. See fetchSquadDeckVenues in venueService.
+ */
+export async function fetchStubsForDistricts(districtIds: string[]): Promise<VenueWithId[]> {
+  if (!districtIds.length) return [];
+
+  // Each snapshot is L1/L2-cached, so aggregating a handful of districts costs
+  // little. Fetch in parallel, preserving the caller's district order.
+  const snapshots = await Promise.all(districtIds.map((id) => fetchSnapshot(id)));
 
   // Merge across districts, deduping on placeId: a venue near a district border
   // is caught by both adjacent Foursquare searches and lands in two snapshots.
-  // First (nearest district) wins, which also keeps nearer venues earlier in
-  // the deck.
+  // First district wins, which also keeps nearer venues earlier in the deck.
   const byPlaceId = new Map<string, VenueWithId>();
   for (const snapshot of snapshots) {
     if (!snapshot?.venues?.length) continue;
@@ -273,8 +281,22 @@ export async function fetchDistrictStubs(location: {
   }
 
   const stubs = [...byPlaceId.values()];
+  // Load-bearing, not bookkeeping: stubs have no venues/{id} document, so a
+  // right-swiped stub can only be resolved later from this local directory.
+  // Skip it and matched venues silently vanish when building an itinerary.
   await rememberStubs(stubs);
   return stubs;
+}
+
+/**
+ * Auto-created venues for the user's own district, or [] when they're outside
+ * every covered district / the snapshot hasn't been generated yet.
+ */
+export async function fetchDistrictStubs(location: {
+  latitude: number;
+  longitude: number;
+}): Promise<VenueWithId[]> {
+  return fetchStubsForDistricts(await resolveDistrictIds(location));
 }
 
 // ── Local stub directory ─────────────────────────────────────────────────────

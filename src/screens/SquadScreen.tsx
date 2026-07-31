@@ -35,7 +35,7 @@ export default function SquadScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const tabBarHeight = useBottomTabBarHeight();
   const { user } = useAuth();
-  const { squad, restoring, isHost, create, join } = useSquad();
+  const { squad, squadId, mySquads, restoring, isHost, create, join, switchTo } = useSquad();
   const { upgradeCtaLabel } = useConsumerSubscription();
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -110,6 +110,8 @@ export default function SquadScreen({ navigation }: Props) {
     );
   }
 
+  const otherSquads = mySquads.filter((s) => s.id !== squadId);
+
   // ── State 2: in a squad — the lobby ────────────────────────────────────────
   if (squad) {
     const memberIds = squad.members;
@@ -169,6 +171,39 @@ export default function SquadScreen({ navigation }: Props) {
           <Text style={styles.primaryButtonText}>Start Swiping</Text>
         </Pressable>
 
+        {/* The user's OTHER squads. Without this they're unreachable: joining a
+            new squad silently replaces the active one, and the old PIN is the
+            only way back. */}
+        {otherSquads.length > 0 && (
+          <View style={styles.otherSquads}>
+            <Text style={styles.otherSquadsHeading}>Your other squads</Text>
+            {otherSquads.map((other) => (
+              <Pressable
+                key={other.id}
+                style={({ pressed }) => [styles.squadRow, pressed && styles.dim]}
+                onPress={() => switchTo(other.id)}
+              >
+                <Text style={styles.squadRowEmoji}>🍻</Text>
+                <View style={styles.squadRowBody}>
+                  <Text style={styles.squadRowPin}>{other.pin}</Text>
+                  <Text style={styles.squadRowMeta}>
+                    {other.members.length}{' '}
+                    {other.members.length === 1 ? 'member' : 'members'}
+                  </Text>
+                </View>
+                <Text style={styles.squadRowAction}>Swipe with</Text>
+              </Pressable>
+            ))}
+            <Pressable
+              style={({ pressed }) => [styles.soloRow, pressed && styles.dim]}
+              onPress={() => switchTo(null)}
+            >
+              <Text style={styles.squadRowEmoji}>🕺</Text>
+              <Text style={styles.soloRowText}>Swipe solo instead</Text>
+            </Pressable>
+          </View>
+        )}
+
         <LeaveButton styles={styles} isHost={isHost} />
       </ScrollView>
     );
@@ -185,11 +220,35 @@ export default function SquadScreen({ navigation }: Props) {
       keyboardShouldPersistTaps="handled"
     >
       <Text style={styles.heroEmoji}>🍻</Text>
-      <Text style={styles.heroTitle}>Squad up</Text>
+      <Text style={styles.heroTitle}>{otherSquads.length > 0 ? 'Your squads' : 'Squad up'}</Text>
       <Text style={styles.heroSubtitle}>
-        Better nights are decided together. Start a squad, share the PIN, and when everyone
-        swipes right on the same spot — it&apos;s a match.
+        {otherSquads.length > 0
+          ? "You're swiping solo right now. Pick a squad to swipe together, or start another."
+          : "Better nights are decided together. Start a squad, share the PIN, and when everyone swipes right on the same spot — it's a match."}
       </Text>
+
+      {/* Reachable even while solo — belonging to a squad and swiping with it
+          are separate choices, and this screen is where you change the latter. */}
+      {otherSquads.length > 0 && (
+        <View style={styles.otherSquads}>
+          {otherSquads.map((other) => (
+            <Pressable
+              key={other.id}
+              style={({ pressed }) => [styles.squadRow, pressed && styles.dim]}
+              onPress={() => switchTo(other.id)}
+            >
+              <Text style={styles.squadRowEmoji}>🍻</Text>
+              <View style={styles.squadRowBody}>
+                <Text style={styles.squadRowPin}>{other.pin}</Text>
+                <Text style={styles.squadRowMeta}>
+                  {other.members.length} {other.members.length === 1 ? 'member' : 'members'}
+                </Text>
+              </View>
+              <Text style={styles.squadRowAction}>Swipe with</Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
@@ -294,6 +353,42 @@ function LeaveButton({
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.background },
+    otherSquads: { width: '100%', marginTop: 22 },
+    otherSquadsHeading: {
+      color: colors.textMuted,
+      fontSize: 12,
+      fontWeight: '800',
+      letterSpacing: 1,
+      textTransform: 'uppercase',
+      marginBottom: 10,
+    },
+    squadRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      backgroundColor: colors.surface,
+      borderColor: colors.border,
+      borderWidth: 1,
+      borderRadius: 14,
+      padding: 14,
+      marginBottom: 10,
+    },
+    squadRowEmoji: { fontSize: 20 },
+    squadRowBody: { flex: 1 },
+    squadRowPin: { color: colors.text, fontSize: 16, fontWeight: '700', letterSpacing: 0.5 },
+    squadRowMeta: { color: colors.textMuted, fontSize: 13, marginTop: 2 },
+    squadRowAction: { color: colors.primary, fontSize: 13, fontWeight: '700' },
+    soloRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      borderColor: colors.borderStrong,
+      borderWidth: 1,
+      borderStyle: 'dashed',
+      borderRadius: 14,
+      padding: 14,
+    },
+    soloRowText: { color: colors.textMuted, fontSize: 14, fontWeight: '600' },
     centered: {
       flex: 1,
       alignItems: 'center',

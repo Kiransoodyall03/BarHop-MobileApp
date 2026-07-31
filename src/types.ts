@@ -142,9 +142,10 @@ export interface StubVenue {
   categories?: string[];
   latitude: number;
   longitude: number;
-  // A single Foursquare photo URL, fetched ONCE per venue by the refresh
-  // function and cached in the snapshot (only new venues cost a Premium call).
-  // Absent ⇒ the card shows the 🍸 fallback.
+  // One ready-to-render Foursquare photo URL, already assembled server-side
+  // (Foursquare returns prefix/suffix halves; the app never sees that format)
+  // and capped at 800px for mobile data cost. Absent when the place has no
+  // photo ⇒ the card shows the 🍸 fallback rather than a broken image.
   photoUrl?: string;
 }
 
@@ -329,6 +330,12 @@ export const FILTER_GENRE_OPTIONS = [
   'jazz',
 ] as const;
 
+// Genre chips a FREE user can select. A strict subset of FILTER_GENRE_OPTIONS —
+// a taste of the filter, with the remaining ~13 values, dress code and cover
+// charge behind Pro. Derive the locked remainder from this rather than keeping a
+// second hand-written list, or the two drift the moment a category is added.
+export const FREE_GENRE_OPTIONS: string[] = ['bar', 'club', 'cocktail bar', 'restaurant'];
+
 export const DRESS_CODE_OPTIONS: { value: string; label: string }[] = [
   { value: 'casual', label: 'Casual' },
   { value: 'smart-casual', label: 'Smart Casual' },
@@ -408,7 +415,22 @@ export interface Squad {
   // Host-set deck filters, inherited live by every member so decks stay
   // identical (consensus requires everyone to see the same venues).
   filters?: VenueFilters;
+  // Union of every member's nearby district IDs — the squad deck is the
+  // culmination of all members' solo stacks. Read by EVERY member off this
+  // shared doc, never recomputed from the viewer's own location: consensus
+  // matching needs identical decks, and a card one member never saw can never
+  // match. Grows as members join and never shrinks — removing a district could
+  // strand likes on venues that can no longer reach consensus.
+  //
+  // Absent on squads created before this field; they self-heal on first deck
+  // load and show published venues only until then.
+  deckDistrictIds?: string[];
   createdAt: FirestoreTimestamp | Date;
+}
+
+/** A squad document plus its ID — what the multi-squad picker renders. */
+export interface SquadWithId extends Squad {
+  id: string;
 }
 
 /**

@@ -1,6 +1,12 @@
 import { haversineKm } from './geo';
 import { resolveVenueCoords } from './venueCoords';
-import { EMPTY_FILTERS, type StoredLocation, type VenueFilters, type VenueWithId } from '../types';
+import {
+  EMPTY_FILTERS,
+  FREE_GENRE_OPTIONS,
+  type StoredLocation,
+  type VenueFilters,
+  type VenueWithId,
+} from '../types';
 
 /**
  * Applies deck filters to a local venue array (before ad injection).
@@ -62,6 +68,31 @@ export function applyProFilters(
 
     return true;
   });
+}
+
+/**
+ * Strips filter dimensions the given tier isn't entitled to.
+ *
+ * Needed because entitlement can be lost after filters were set — a lapsed Pro
+ * subscriber, or a free member inheriting a Pro host's squad filters — and
+ * applyProFilters itself has no notion of tier.
+ *
+ * ⚠️ Apply this to SOLO filters only, never to a squad's. Every member of a
+ * squad must apply the identical host-set filters: sanitizing per-member would
+ * hand a free member a different deck from a Pro member, and a venue one of
+ * them never saw can never reach consensus (see isVenueMatched).
+ */
+export function sanitizeFiltersForTier(
+  filters: VenueFilters,
+  hasAdvancedFilters: boolean
+): VenueFilters {
+  if (hasAdvancedFilters) return filters;
+  return {
+    ...filters,
+    genres: filters.genres.filter((genre) => FREE_GENRE_OPTIONS.includes(genre)),
+    dressCode: null,
+    maxCover: null,
+  };
 }
 
 /** Number of active filter dimensions — drives the header badge. */

@@ -1,3 +1,5 @@
+import { useEffect, useRef } from 'react';
+import { AppState, type AppStateStatus } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -6,6 +8,7 @@ import { SquadProvider } from './src/context/SquadContext';
 import AppNavigator from './src/navigation/AppNavigator';
 import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
 import { initializeAds } from './src/ads/adsModule';
+import { enforceAppUpdate } from './src/services/appUpdates';
 import { initSentry, sentryEnabled, Sentry } from './src/services/sentry';
 
 // Init crash reporting FIRST so a failure during any of the setup below is
@@ -27,7 +30,32 @@ function ThemedApp() {
   );
 }
 
+/**
+ * Play's Immediate update gate. Runs OUTSIDE the auth tree on purpose: an
+ * out-of-date client should be blocked before it can read or write anything,
+ * not after it signs in.
+ *
+ * Re-checked on foreground so a session left open across a release still gets
+ * gated, but never more than once per foreground transition.
+ */
+function useForcedUpdateCheck() {
+  const appState = useRef(AppState.currentState);
+
+  useEffect(() => {
+    void enforceAppUpdate();
+
+    const subscription = AppState.addEventListener('change', (next: AppStateStatus) => {
+      const returning = appState.current.match(/inactive|background/) && next === 'active';
+      appState.current = next;
+      if (returning) void enforceAppUpdate();
+    });
+    return () => subscription.remove();
+  }, []);
+}
+
 function App() {
+  useForcedUpdateCheck();
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>

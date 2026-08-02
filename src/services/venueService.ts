@@ -36,18 +36,28 @@ export async function fetchPublishedVenues(): Promise<VenueWithId[]> {
  *
  * Without a stored location we return owner venues only; stubs are inherently
  * location-scoped.
+ *
+ * `manualDistrictIds` is the Pro area picker's override: when present it
+ * REPLACES location-based district resolution entirely, so a user can swipe in
+ * an area they aren't standing in. It reuses fetchStubsForDistricts, which
+ * already exists because squad decks needed the same "districts from somewhere
+ * other than this viewer's GPS" capability.
  */
 export async function fetchDeckVenues(
-  location?: StoredLocation | null
+  location?: StoredLocation | null,
+  manualDistrictIds?: string[] | null
 ): Promise<VenueWithId[]> {
   const owned = await fetchPublishedVenues();
-  if (!location) return owned;
+  const useManual = !!manualDistrictIds?.length;
+  if (!useManual && !location) return owned;
 
   // A stub failure must never take the deck down with it — owner venues are
   // the baseline experience and the cache is an enhancement.
   let stubs: VenueWithId[] = [];
   try {
-    stubs = await fetchDistrictStubs(location);
+    stubs = useManual
+      ? await fetchStubsForDistricts(manualDistrictIds!)
+      : await fetchDistrictStubs(location!);
   } catch (error) {
     console.warn('[venueService] district stub fetch failed:', error);
     return owned;

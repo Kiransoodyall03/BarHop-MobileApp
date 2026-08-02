@@ -17,9 +17,13 @@ import type {
   NativeStackScreenProps,
 } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
+import Avatar from '../../components/Avatar';
 import { useAuth } from '../../context/AuthContext';
+import { useSquad } from '../../context/SquadContext';
 import { signOutUser } from '../../services/authService';
 import { captureLocation } from '../../services/profileService';
+import { useLiveLocationTracking } from '../../hooks/useLiveLocationTracking';
+import { useIsFocused } from '@react-navigation/native';
 import { removeSampleVenues, seedSampleVenues } from '../../dev/sampleVenues';
 import { useConsumerSubscription } from '../../hooks/useConsumerSubscription';
 import RedeemCodeModal from '../../components/RedeemCodeModal';
@@ -35,9 +39,6 @@ const PLAY_SUBSCRIPTIONS_URL = 'https://play.google.com/store/account/subscripti
 
 type Props = NativeStackScreenProps<ProfileStackParamList, 'Profile'>;
 
-// Sunset-family avatar backgrounds (initials are always white).
-const AVATAR_COLORS = ['#E63A5B', '#D97706', '#0D9488', '#B45309', '#C2410C', '#BE185D'];
-
 const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
   { value: 'system', label: 'System' },
   { value: 'light', label: 'Light' },
@@ -49,11 +50,13 @@ export default function ProfileScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const tabBarHeight = useBottomTabBarHeight();
   const { user, profile } = useAuth();
+  const { squadId, isInSquad } = useSquad();
   const { colors, preference, setPreference } = useTheme();
   const styles = useThemedStyles(createStyles);
   const [locating, setLocating] = useState(false);
   const [redeemVisible, setRedeemVisible] = useState(false);
   const { isPro, tier } = useConsumerSubscription();
+  const isFocused = useIsFocused();
   // The Paywall lives on the ROOT stack (reachable from every tab), so it needs
   // root typing rather than this screen's ProfileStack `navigation` prop.
   const rootNavigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -68,11 +71,6 @@ export default function ProfileScreen({ navigation }: Props) {
   const initials =
     `${(profile?.firstName || displayName)[0] ?? ''}${(profile?.lastName || '')[0] ?? ''}`
       .toUpperCase() || '🍸';
-  const avatarColor =
-    AVATAR_COLORS[
-      (user?.uid ?? '').split('').reduce((sum, ch) => sum + ch.charCodeAt(0), 0) %
-        AVATAR_COLORS.length
-    ];
 
   const locationGranted = profile?.locationPermission === 'granted';
   const locationUpdated = toDate(profile?.location?.updatedAt);
@@ -81,6 +79,12 @@ export default function ProfileScreen({ navigation }: Props) {
     : profile?.locationPermission === 'denied'
       ? 'Off — permission denied'
       : 'Off';
+
+  useLiveLocationTracking({
+    uid: user?.uid ?? null,
+    squadId: isInSquad ? squadId : null,
+    enabled: isFocused && locationGranted,
+  });
 
   async function handleLocationPress() {
     if (!user || locating) return;
@@ -166,9 +170,12 @@ export default function ProfileScreen({ navigation }: Props) {
       }}
     >
       <View style={styles.identity}>
-        <View style={[styles.avatar, { backgroundColor: avatarColor }]}>
-          <Text style={styles.avatarText}>{initials}</Text>
-        </View>
+        <Avatar
+          photoURL={profile?.photoURL}
+          initials={initials}
+          seed={user?.uid ?? ''}
+          size={96}
+        />
         <Text style={styles.name}>{displayName}</Text>
         {email ? <Text style={styles.email}>{email}</Text> : null}
         <View style={[styles.tierBadge, isPro && styles.tierBadgePro]}>
@@ -319,14 +326,6 @@ const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.background },
     identity: { alignItems: 'center', marginBottom: 32 },
-    avatar: {
-      width: 96,
-      height: 96,
-      borderRadius: 48,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    avatarText: { color: '#FFFFFF', fontSize: 34, fontWeight: '800' },
     name: { color: colors.text, fontSize: 24, fontWeight: '800', marginTop: 14 },
     email: { color: colors.textMuted, fontSize: 14, marginTop: 4 },
 

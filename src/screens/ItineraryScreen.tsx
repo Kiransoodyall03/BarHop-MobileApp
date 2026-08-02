@@ -14,11 +14,14 @@ import MapView, { Marker, Polyline } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
+import { useIsFocused } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import Avatar from '../components/Avatar';
 import ProUpsellModal from '../components/ProUpsellModal';
 import { useAuth } from '../context/AuthContext';
 import { useSquad } from '../context/SquadContext';
 import { useConsumerSubscription } from '../hooks/useConsumerSubscription';
+import { useLiveLocationTracking } from '../hooks/useLiveLocationTracking';
 import {
   addStop,
   ItineraryLimitError,
@@ -62,6 +65,13 @@ export default function ItineraryScreen() {
   const [hasLocationPermission, setHasLocationPermission] = useState(false);
 
   const mapRef = useRef<MapView>(null);
+  const isFocused = useIsFocused();
+
+  useLiveLocationTracking({
+    uid: user?.uid ?? null,
+    squadId: isInSquad ? squadId : null,
+    enabled: isFocused && hasLocationPermission,
+  });
 
   useEffect(() => {
     if (!planKey) return;
@@ -79,6 +89,15 @@ export default function ItineraryScreen() {
       .then((permission) => setHasLocationPermission(permission.status === 'granted'))
       .catch(() => {});
   }, []);
+
+  const selfInitials = useMemo(() => {
+    const name =
+      profile?.displayName ||
+      [profile?.firstName, profile?.lastName].filter(Boolean).join(' ') ||
+      user?.displayName ||
+      '';
+    return `${(profile?.firstName || name)[0] ?? ''}${(profile?.lastName || '')[0] ?? ''}`.toUpperCase();
+  }, [profile?.displayName, profile?.firstName, profile?.lastName, user?.displayName]);
 
   const stops = useMemo(() => itinerary?.stops ?? [], [itinerary]);
   const mappedStops = useMemo(() => stops.filter((stop) => stop.coords), [stops]);
@@ -176,7 +195,6 @@ export default function ItineraryScreen() {
           ref={mapRef}
           style={StyleSheet.absoluteFill}
           initialRegion={initialRegion}
-          showsUserLocation={hasLocationPermission}
         >
           {mappedStops.map((stop, index) => (
             <Marker
@@ -193,6 +211,61 @@ export default function ItineraryScreen() {
               </View>
             </Marker>
           ))}
+          {profile?.location && user && (
+            <Marker
+              key="self"
+              coordinate={{
+                latitude: profile.location.latitude,
+                longitude: profile.location.longitude,
+              }}
+              title="You"
+              anchor={{ x: 0.5, y: 0.5 }}
+            >
+              <View style={styles.personPin}>
+                <Avatar
+                  photoURL={profile.photoURL}
+                  initials={selfInitials}
+                  seed={user.uid}
+                  size={30}
+                />
+              </View>
+            </Marker>
+          )}
+          {isInSquad &&
+            squad?.members
+              .filter((memberUid) => memberUid !== user?.uid)
+              .map((memberUid) => {
+                const memberLocation = squad.memberLocations?.[memberUid];
+                if (!memberLocation) return null;
+                const memberName = squad.memberNames?.[memberUid] ?? '';
+                const memberInitials = memberName
+                  .split(' ')
+                  .map((part) => part[0])
+                  .filter(Boolean)
+                  .slice(0, 2)
+                  .join('')
+                  .toUpperCase();
+                return (
+                  <Marker
+                    key={memberUid}
+                    coordinate={{
+                      latitude: memberLocation.latitude,
+                      longitude: memberLocation.longitude,
+                    }}
+                    title={memberName || 'Squad member'}
+                    anchor={{ x: 0.5, y: 0.5 }}
+                  >
+                    <View style={styles.personPin}>
+                      <Avatar
+                        photoURL={squad.memberPhotos?.[memberUid]}
+                        initials={memberInitials}
+                        seed={memberUid}
+                        size={30}
+                      />
+                    </View>
+                  </Marker>
+                );
+              })}
           {mappedStops.length >= 2 && (
             <Polyline
               coordinates={mappedStops.map((stop) => ({
@@ -490,6 +563,14 @@ const createStyles = (colors: ThemeColors) =>
       justifyContent: 'center',
     },
     pinText: { color: colors.onPrimary, fontSize: 15, fontWeight: '800' },
+    personPin: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      borderWidth: 2,
+      borderColor: '#FFFFFF',
+      overflow: 'hidden',
+    },
 
     listArea: {
       flex: 4,

@@ -8,13 +8,20 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  View,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
+import { Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import Avatar from '../../components/Avatar';
 import TextField from '../../components/form/TextField';
 import ChipSelect from '../../components/form/ChipSelect';
 import DobField from '../../components/form/DobField';
 import { useAuth } from '../../context/AuthContext';
+import { useSquad } from '../../context/SquadContext';
 import { ageFromDob, updateProfile } from '../../services/profileService';
+import { uploadAvatar } from '../../services/avatarService';
+import { propagatePhotoToMySquads } from '../../services/squadService';
 import { useTheme, useThemedStyles } from '../../theme/ThemeContext';
 import type { ThemeColors } from '../../theme/colors';
 import {
@@ -31,9 +38,12 @@ type Props = NativeStackScreenProps<ProfileStackParamList, 'EditProfile'>;
 
 export default function EditProfileScreen({ navigation }: Props) {
   const { user, profile } = useAuth();
+  const { mySquads } = useSquad();
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
 
+  const [avatarUri, setAvatarUri] = useState<string | null>(profile?.photoURL ?? null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [firstName, setFirstName] = useState(profile?.firstName ?? '');
   const [lastName, setLastName] = useState(profile?.lastName ?? '');
   const [dateOfBirth, setDateOfBirth] = useState(profile?.dateOfBirth ?? '');
@@ -46,6 +56,9 @@ export default function EditProfileScreen({ navigation }: Props) {
   );
   const [touched, setTouched] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  const initials =
+    `${(firstName || profile?.firstName || '')[0] ?? ''}${(lastName || profile?.lastName || '')[0] ?? ''}`.toUpperCase();
 
   const age = useMemo(() => (dateOfBirth ? ageFromDob(dateOfBirth) : null), [dateOfBirth]);
   const underage = age !== null && age < MIN_AGE;
@@ -64,6 +77,43 @@ export default function EditProfileScreen({ navigation }: Props) {
     setDietaryPreferences((current) =>
       current.includes(option) ? current.filter((d) => d !== option) : [...current, option]
     );
+  }
+
+  async function handleChangePhoto() {
+    if (!user || uploadingAvatar) return;
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (permission.status !== 'granted') {
+      Alert.alert(
+        'Photo access needed',
+        'Enable photo library access in Settings to set a profile picture.'
+      );
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+    if (result.canceled) return;
+
+    const previousUri = avatarUri;
+    const pickedUri = result.assets[0].uri;
+    setAvatarUri(pickedUri);
+    setUploadingAvatar(true);
+    try {
+      const photoURL = await uploadAvatar(user.uid, pickedUri);
+      setAvatarUri(photoURL);
+      if (mySquads.length > 0) {
+        await propagatePhotoToMySquads(mySquads, user.uid, photoURL);
+      }
+    } catch (error) {
+      console.warn('[EditProfileScreen] avatar upload failed:', error);
+      setAvatarUri(previousUri);
+      Alert.alert('Could not upload photo', 'Please check your connection and try again.');
+    } finally {
+      setUploadingAvatar(false);
+    }
   }
 
   async function handleSave() {
@@ -99,6 +149,19 @@ export default function EditProfileScreen({ navigation }: Props) {
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
+        <View style={styles.avatarSection}>
+          <Pressable onPress={handleChangePhoto} disabled={uploadingAvatar}>
+            <Avatar photoURL={avatarUri} initials={initials} seed={user?.uid ?? ''} size={96} />
+            <View style={styles.avatarEditBadge}>
+              {uploadingAvatar ? (
+                <ActivityIndicator size="small" color={colors.onPrimary} />
+              ) : (
+                <Ionicons name="camera" size={16} color={colors.onPrimary} />
+              )}
+            </View>
+          </Pressable>
+        </View>
+
         <TextField
           label="First name"
           value={firstName}
@@ -169,6 +232,20 @@ const createStyles = (colors: ThemeColors) =>
     flex: { flex: 1 },
     container: { flex: 1, backgroundColor: colors.background },
     content: { padding: 24, paddingBottom: 48 },
+    avatarSection: { alignItems: 'center', marginBottom: 24 },
+    avatarEditBadge: {
+      position: 'absolute',
+      right: -2,
+      bottom: -2,
+      width: 30,
+      height: 30,
+      borderRadius: 15,
+      backgroundColor: colors.primary,
+      borderWidth: 2,
+      borderColor: colors.background,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
     saveButton: {
       backgroundColor: colors.primary,
       borderRadius: 14,

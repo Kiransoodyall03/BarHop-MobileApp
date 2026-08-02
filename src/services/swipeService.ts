@@ -1,5 +1,6 @@
 import {
-  deleteDoc,
+  arrayRemove,
+  arrayUnion,
   doc,
   increment,
   serverTimestamp,
@@ -28,11 +29,19 @@ import type { SwipeDirection } from '../types';
  *
  * Auto-created stubs skip step 2 — see skipAnalytics below. Personal swipe
  * history is still recorded, so a stub is never shown twice.
+ *
+ * 3. userLikes/{userId} — ONLY when `shareWithFriends` is true and this is a
+ *    right-swipe. This is the document accepted friends read to derive
+ *    matches, so it is written only under an explicit opt-in
+ *    (profile.socialDiscoveryEnabled). One arrayUnion regardless of friend
+ *    count — deliberately not fanned out per friendship, which would cost a
+ *    write per friend per swipe.
  */
 export async function recordSwipe(
   userId: string,
   venueId: string,
-  direction: SwipeDirection
+  direction: SwipeDirection,
+  shareWithFriends = false
 ): Promise<void> {
   const now = new Date();
   const dayKey = localDayKey(now);
@@ -45,6 +54,14 @@ export async function recordSwipe(
     direction,
     swipedAt: serverTimestamp(),
   });
+
+  if (shareWithFriends && direction === 'right') {
+    batch.set(
+      doc(db, 'userLikes', userId),
+      { venueIds: arrayUnion(venueId), updatedAt: serverTimestamp() },
+      { merge: true }
+    );
+  }
 
   if (!skipAnalytics(venueId)) {
     batch.set(
@@ -136,9 +153,21 @@ export async function recordVenueClickThrough(venueId: string): Promise<void> {
  * venue can be swiped on again (and reappears in future solo decks). Venue
  * analytics deliberately keep both interactions — owner metrics count
  * activity, which is standard for rewind features.
+ *
+ * The shared like is removed too (unconditionally — arrayRemove on a venue
+ * that isn't there is a harmless no-op, and it self-heals a like left behind
+ * by a since-disabled opt-in). Skipping it would strand a friend match on a
+ * venue the user has taken back.
  */
 export async function undoSwipeRecord(userId: string, venueId: string): Promise<void> {
-  await deleteDoc(doc(db, 'users', userId, 'swipedVenues', venueId));
+  const batch = writeBatch(db);
+  batch.delete(doc(db, 'users', userId, 'swipedVenues', venueId));
+  batch.set(
+    doc(db, 'userLikes', userId),
+    { venueIds: arrayRemove(venueId), updatedAt: serverTimestamp() },
+    { merge: true }
+  );
+  await batch.commit();
 }
 
 // Day bucket in the device's local timezone (SAST for the launch market).

@@ -226,6 +226,17 @@ export interface ConsumerProfile {
   location?: StoredLocation;
   locationPermission?: LocationPermissionState;
   profileCompleted?: boolean;
+  // Short shareable code others type to send a friend request. Generated
+  // lazily on first use — see ensureFriendCode. The reverse lookup lives in
+  // friendCodes/{code}, because users/{uid} is not readable by anyone else.
+  friendCode?: string;
+  // OPT-IN gate for cross-friend matching. Nothing is ever written to
+  // userLikes/{uid} while this is false/absent: sharing which venues you
+  // right-swiped is a deliberate choice, not a default.
+  socialDiscoveryEnabled?: boolean;
+  // Expo push token, refreshed on sign-in. Denormalized onto friendship docs
+  // so a friend's client can notify them of a match.
+  expoPushToken?: string | null;
   // Paid subscription tier — written ONLY by the revenueCatWebhook Cloud
   // Function after Google Play confirms a purchase. Absent = free.
   consumerTier?: ConsumerTier;
@@ -407,6 +418,15 @@ export interface Squad {
   hostId: string;
   members: string[]; // uids — the consensus denominator
   memberNames: Record<string, string>; // uid → display name (lobby UI)
+  // uid → avatar URL, denormalized for the same reason as memberNames.
+  // Propagated to every squad the user belongs to on avatar change (Part 5
+  // of the profile-picture feature) rather than snapshotted once at join.
+  memberPhotos?: Record<string, string>;
+  // uid → live location, ACTIVE-squad-only: only the squad a member is
+  // currently swiping with receives their location ticks (see
+  // useLiveLocationTracking). Absent/stale once they switch away or close
+  // the app — there is no background tracking.
+  memberLocations?: Record<string, StoredLocation>;
   isActive: boolean;
   likes?: Record<string, string[]>; // venueId → uids who right-swiped
   // Squad capacity follows the HOST's consumer tier at creation time.
@@ -440,4 +460,79 @@ export interface SquadWithId extends Squad {
 export function isVenueMatched(squad: Squad, venueId: string): boolean {
   const likes = squad.likes?.[venueId] ?? [];
   return squad.members.length >= 2 && likes.length >= squad.members.length;
+}
+
+// ── Friends (asynchronous solo-mode matching) ────────────────────────────────
+//
+// Deliberately NOT squads. A squad is a synchronous, ephemeral session with one
+// shared deck and all-members consensus; a friendship is persistent, pairwise,
+// and matches off each person's own solo swiping whenever it happened.
+
+/** Denormalized snapshot of a friend, so the pair never reads users/{uid}. */
+export interface FriendProfileSnapshot {
+  displayName: string;
+  photoURL: string | null;
+  expoPushToken?: string | null;
+}
+
+export type FriendshipStatus = 'pending' | 'accepted';
+
+/**
+ * friendships/{pairId}, where pairId is the two uids sorted and joined with
+ * '_'. The ID is derived rather than random on purpose: it makes a duplicate
+ * request structurally impossible and lets either side address the document
+ * without a query.
+ */
+export interface Friendship {
+  users: string[]; // exactly two uids — array-contains drives the friends list
+  status: FriendshipStatus;
+  requestedBy: string; // uid that sent the request
+  profiles: Record<string, FriendProfileSnapshot>;
+  createdAt: FirestoreTimestamp | Date;
+  updatedAt: FirestoreTimestamp | Date;
+}
+
+export interface FriendshipWithId extends Friendship {
+  id: string;
+}
+
+/** friendCodes/{code} — the only way to resolve a code to a uid. */
+export interface FriendCodeDoc {
+  uid: string;
+  createdAt: FirestoreTimestamp | Date;
+}
+
+/**
+ * userLikes/{uid} — venue IDs this user right-swiped in SOLO mode, readable by
+ * accepted friends only.
+ *
+ * One document per user rather than copying each like into every friendship:
+ * fan-out would cost one write per friend per swipe, which at 50 friends turns
+ * a 15-swipe session into 750 writes. Matching is a set intersection computed
+ * on the client instead, so the write cost stays flat at one per swipe.
+ */
+export interface UserLikes {
+  venueIds: string[];
+  updatedAt: FirestoreTimestamp | Date;
+}
+
+/** Deterministic friendship document ID for a pair of uids. */
+export function friendshipIdFor(a: string, b: string): string {
+  return a < b ? `${a}_${b}` : `${b}_${a}`;
+}
+
+/** The other participant's uid. */
+export function friendUidOf(friendship: Friendship, myUid: string): string {
+  return friendship.users.find((uid) => uid !== myUid) ?? myUid;
+}
+
+/**
+ * A venue you and this friend both right-swiped. Grouped EGOCENTRICALLY in the
+ * UI: "you, Ben and Cara liked X" means each of them matched with YOU, not that
+ * Ben and Cara are friends with each other — verifying that would mean reading
+ * a friendship document you aren't part of, which the rules (correctly) forbid.
+ */
+export interface FriendMatch {
+  venueId: string;
+  friendUids: string[];
 }

@@ -10,6 +10,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useAuth } from '../context/AuthContext';
 import AuthScreen from '../screens/AuthScreen';
 import PaywallScreen from '../screens/PaywallScreen';
+import AreaSelectorScreen from '../screens/AreaSelectorScreen';
 import OnboardingNavigator from './OnboardingNavigator';
 import MainTabs from './MainTabs';
 import { useTheme, useThemedStyles } from '../theme/ThemeContext';
@@ -22,6 +23,7 @@ export type RootStackParamList = {
   // `source` records which upsell surface opened the paywall — useful for
   // conversion attribution later; nothing reads it yet.
   Paywall: { source?: string } | undefined;
+  AreaSelector: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -69,6 +71,13 @@ export default function AppNavigator() {
             <Stack.Screen
               name="Paywall"
               component={PaywallScreen}
+              options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+            />
+            {/* Root-level for the same reason as Paywall: it's opened from the
+                Discover tab but must render full-screen over the tab bar. */}
+            <Stack.Screen
+              name="AreaSelector"
+              component={AreaSelectorScreen}
               options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
             />
           </>

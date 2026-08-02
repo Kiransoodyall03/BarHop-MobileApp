@@ -2,7 +2,7 @@
   "expo": {
     "name": "BarHop",
     "slug": "BarHop-MobileApp",
-    "version": "1.0.5",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "barhop",
@@ -41,6 +41,13 @@
           "locationWhenInUsePermission": "BarHop uses your location to show you bars and clubs nearby."
         }
       ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "BarHop uses your photos to set your profile picture."
+        }
+      ],
+      "expo-notifications",
       "expo-video",
       [
         "react-native-google-mobile-ads",

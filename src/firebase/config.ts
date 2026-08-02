@@ -2,6 +2,7 @@ import { initializeApp } from 'firebase/app';
 import * as firebaseAuth from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import { getFunctions } from 'firebase/functions';
+import { getStorage } from 'firebase/storage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Same Firebase project as the B2B Creator webapp — both apps share the
@@ -15,7 +16,7 @@ const firebaseConfig = {
   appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
 };
 
-const app = initializeApp(firebaseConfig);
+export const app = initializeApp(firebaseConfig);
 
 // getReactNativePersistence exists in the React Native bundle Metro resolves,
 // but is absent from the web type definitions firebase v12 ships to TS
@@ -29,6 +30,8 @@ export const auth = firebaseAuth.initializeAuth(app, {
 });
 
 export const db = getFirestore(app);
+
+export const storage = getStorage(app);
 
 // Callable Cloud Functions (voucher redemption). Region must match the
 // functions' deployment region in the Creator webapp repo — Firebase defaults

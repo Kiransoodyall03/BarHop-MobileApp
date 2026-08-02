@@ -120,7 +120,8 @@ export async function createSquad(
   userId: string,
   displayName: string,
   tier: ConsumerTier = 'free',
-  location?: StoredLocation | null
+  location?: StoredLocation | null,
+  photoURL?: string | null
 ): Promise<{ squadId: string; pin: string }> {
   const { maxSquads } = limitsForTier(tier);
   if (Number.isFinite(maxSquads)) {
@@ -144,6 +145,7 @@ export async function createSquad(
     hostId: userId,
     members: [userId],
     memberNames: { [userId]: displayName },
+    ...(photoURL ? { memberPhotos: { [userId]: photoURL } } : {}),
     isActive: true,
     likes: {},
     tier,
@@ -207,7 +209,8 @@ export async function joinSquad(
   displayName: string,
   pin: string,
   joinerTier: ConsumerTier = 'free',
-  location?: StoredLocation | null
+  location?: StoredLocation | null,
+  photoURL?: string | null
 ): Promise<string> {
   const normalized = pin.trim().toUpperCase();
   const snapshot = await getDocs(
@@ -259,6 +262,7 @@ export async function joinSquad(
     tx.update(match.ref, {
       members: [...squad.members, userId],
       [`memberNames.${userId}`]: displayName,
+      ...(photoURL ? { [`memberPhotos.${userId}`]: photoURL } : {}),
       // The joiner's districts widen the shared deck for EVERYONE — that is the
       // point: a squad's deck is the union of its members' local stacks.
       // arrayUnion rather than a computed array so concurrent joins can't clobber
@@ -302,8 +306,48 @@ export async function leaveSquad(
     await updateDoc(ref, {
       members: arrayRemove(userId),
       [`memberNames.${userId}`]: deleteField(),
+      [`memberPhotos.${userId}`]: deleteField(),
+      [`memberLocations.${userId}`]: deleteField(),
     });
   }
+}
+
+/** Live-location tick for the ACTIVE squad only — see StoredLocation on Squad. */
+export async function updateSquadMemberLocation(
+  squadId: string,
+  userId: string,
+  location: StoredLocation
+): Promise<void> {
+  await updateDoc(doc(db, 'squads', squadId), {
+    [`memberLocations.${userId}`]: location,
+  });
+}
+
+/** Denormalized avatar for one squad — see propagatePhotoToMySquads for the fan-out. */
+export async function updateSquadMemberPhoto(
+  squadId: string,
+  userId: string,
+  photoURL: string | null
+): Promise<void> {
+  await updateDoc(doc(db, 'squads', squadId), {
+    [`memberPhotos.${userId}`]: photoURL ?? deleteField(),
+  });
+}
+
+/**
+ * Fans an avatar change out to every squad the user belongs to (bounded by
+ * maxSquads — 3 free / 7 pro — and only fires on the rare "changed my
+ * photo" event), so a stale avatar doesn't resurface when a different squad
+ * later becomes active.
+ */
+export async function propagatePhotoToMySquads(
+  mySquads: SquadWithId[],
+  userId: string,
+  photoURL: string
+): Promise<void> {
+  await Promise.all(
+    mySquads.map((squad) => updateSquadMemberPhoto(squad.id, userId, photoURL))
+  );
 }
 
 /**

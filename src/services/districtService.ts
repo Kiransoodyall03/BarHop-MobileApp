@@ -110,6 +110,47 @@ async function writeL2<T>(key: string, value: T): Promise<void> {
 
 // ── District resolution ──────────────────────────────────────────────────────
 
+/**
+ * Every active district, for the manual area picker. ONE Firestore read
+ * (L1/L2-cached after that) — the index carries id/name/center/radiusM only,
+ * which is all a map of selectable areas needs. Per-district venue counts cost
+ * a snapshot read each, so those are fetched lazily on selection instead.
+ */
+export async function fetchAllDistricts(): Promise<DistrictRef[]> {
+  const index = await fetchDistrictIndex();
+  return index?.districts ?? [];
+}
+
+/**
+ * Venue count + the most common categories for one district, read from the
+ * shared daily snapshot. Returns null when the district has no snapshot yet.
+ */
+export async function fetchDistrictStats(
+  districtId: string
+): Promise<{ venueCount: number; topCategories: string[] } | null> {
+  const snapshot = await fetchSnapshot(districtId);
+  if (!snapshot) return null;
+
+  const counts = new Map<string, number>();
+  for (const venue of snapshot.venues ?? []) {
+    for (const category of venue.categories ?? (venue.category ? [venue.category] : [])) {
+      counts.set(category, (counts.get(category) ?? 0) + 1);
+    }
+  }
+  const topCategories = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([category]) => category);
+
+  return { venueCount: snapshot.venues?.length ?? 0, topCategories };
+}
+
+/** The venue IDs a district contains — used to count friends' likes in it. */
+export async function fetchDistrictVenueIds(districtId: string): Promise<string[]> {
+  const snapshot = await fetchSnapshot(districtId);
+  return (snapshot?.venues ?? []).map((stub) => stubVenueId(stub.placeId));
+}
+
 /** districtIndex/current — one small doc listing every active district. */
 async function fetchDistrictIndex(): Promise<DistrictIndex | null> {
   const l1 = memoryIndex.get(INDEX_KEY);

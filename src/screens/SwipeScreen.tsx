@@ -9,6 +9,8 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import BarHopLogo from '../components/BarHopLogo';
 import SwipeDeck, { type SwipeDeckHandle } from '../components/SwipeDeck';
@@ -21,6 +23,8 @@ import OutOfSwipesModal, { SWIPES_PER_REWARD } from '../ads/OutOfSwipesModal';
 import { injectAdCards } from '../ads/injectAds';
 import { useAuth } from '../context/AuthContext';
 import { useSquad } from '../context/SquadContext';
+import { useFriends } from '../context/FriendsContext';
+import { useAreaSelection } from '../context/AreaSelectionContext';
 import { useConsumerSubscription } from '../hooks/useConsumerSubscription';
 import {
   fetchDeckVenues,
@@ -54,6 +58,7 @@ import {
   type VenueFilters,
   type VenueWithId,
 } from '../types';
+import type { RootStackParamList } from '../navigation/AppNavigator';
 
 // Clearance between the deck's bottom edge and the action buttons row.
 const ACTION_BUTTON_CLEARANCE = 86;
@@ -65,13 +70,19 @@ const FREE_SWIPES_PER_SESSION = 15;
 export default function SwipeScreen() {
   const { user, profile } = useAuth();
   const { squad, squadId, mySquads, isInSquad, isHost, matchedVenueIds, switchTo } = useSquad();
+  const { announceLike } = useFriends();
+  const { selectedDistrictIds, hasManualAreas } = useAreaSelection();
   const {
     showAds,
     hasUnlimitedSwipes,
     hasAdvancedFilters,
     canRewind,
+    hasAreaSelector,
     upgradeCtaLabel,
   } = useConsumerSubscription();
+  // The area picker lives on the ROOT stack (like the Paywall), so it needs
+  // root typing rather than this tab's navigation prop.
+  const rootNavigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const insets = useSafeAreaInsets();
   const tabBarHeight = useBottomTabBarHeight();
   const { colors } = useTheme();
@@ -125,6 +136,12 @@ export default function SwipeScreen() {
     () => [...(squad?.deckDistrictIds ?? [])].sort().join(','),
     [squad?.deckDistrictIds]
   );
+  // Manual area picks reshape the solo deck the same way filters do, so they
+  // get the same sorted-primitive treatment to avoid churning on re-renders.
+  const manualDistrictsKey = useMemo(
+    () => [...selectedDistrictIds].sort().join(','),
+    [selectedDistrictIds]
+  );
 
   // ── Free-tier swipe budget + rewarded gateway ─────────────────────────────
   const [remainingSwipes, setRemainingSwipes] = useState(FREE_SWIPES_PER_SESSION);
@@ -146,6 +163,9 @@ export default function SwipeScreen() {
   // Match celebration state — driven by the squad listener so EVERY member's
   // device fires the modal, not just the final swiper's.
   const [matchVenue, setMatchVenue] = useState<VenueWithId | null>(null);
+  // Set only for SOLO friend matches, where the headcount is me + the friends
+  // who already liked it rather than the squad's size.
+  const [friendMatchCount, setFriendMatchCount] = useState(0);
   // Venues whose details sheet has already been counted this session. Without
   // this, swiping up on the same card repeatedly inflates the owner's "Profile
   // Expansions" KPI into meaninglessness.
@@ -180,7 +200,10 @@ export default function SwipeScreen() {
         venues = await fetchSquadDeckVenues(squad?.deckDistrictIds ?? []);
       } else {
         const [allVenues, swipedIds] = await Promise.all([
-          fetchDeckVenues(profile?.location ?? null),
+          fetchDeckVenues(
+            profile?.location ?? null,
+            hasManualAreas ? selectedDistrictIds : null
+          ),
           fetchSwipedVenueIds(user.uid),
         ]);
         // Solo mode: never show a card the user has already swiped on.
@@ -193,7 +216,12 @@ export default function SwipeScreen() {
       // differently per member, which is exactly the consensus break the union
       // above exists to avoid. Genre/dress/cover are venue properties,
       // identical for everyone, so they still apply.
-      const filterLocation = isInSquad ? null : profile?.location ?? null;
+      //
+      // Manual area picks bypass it for the same reason from the other
+      // direction: the whole point is to swipe somewhere you AREN'T, so
+      // measuring from where you're standing would empty the deck.
+      const filterLocation =
+        isInSquad || hasManualAreas ? null : profile?.location ?? null;
       const filtered = applyProFilters(
         venues,
         JSON.parse(filtersKey) as VenueFilters,
@@ -217,7 +245,16 @@ export default function SwipeScreen() {
       void ensureDeckDistricts(squadId, squad?.deckDistrictIds, profile?.location ?? null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, isInSquad, squadId, deckDistrictsKey, filtersKey, showAds, locationKey]);
+  }, [
+    user,
+    isInSquad,
+    squadId,
+    deckDistrictsKey,
+    filtersKey,
+    showAds,
+    locationKey,
+    manualDistrictsKey,
+  ]);
 
   useEffect(() => {
     loadDeck();
@@ -290,7 +327,25 @@ export default function SwipeScreen() {
           recordSquadSwipe(squadId, venue.id, user.uid).catch(onWriteError);
         }
       } else {
-        recordSwipe(user.uid, venue.id, direction).catch(onWriteError);
+        // Solo right-swipes feed friend matching, but ONLY under the explicit
+        // opt-in. Squad swipes never do (see the branch above): a group
+        // consensus pick isn't a reliable signal of personal taste.
+        recordSwipe(
+          user.uid,
+          venue.id,
+          direction,
+          profile?.socialDiscoveryEnabled === true
+        ).catch(onWriteError);
+
+        // Friends who already liked this venue match instantly — no server
+        // round-trip, since their likes are already in memory here.
+        if (direction === 'right') {
+          const matchedFriends = announceLike(venue.id, venue.name);
+          if (matchedFriends.length > 0) {
+            setFriendMatchCount(matchedFriends.length + 1);
+            setMatchVenue(venue);
+          }
+        }
       }
 
       // Free-tier budget (venue swipes only); Pro/Elite are unlimited.
@@ -298,7 +353,14 @@ export default function SwipeScreen() {
         setRemainingSwipes((current) => Math.max(0, current - 1));
       }
     },
-    [user, isInSquad, squadId, hasUnlimitedSwipes]
+    [
+      user,
+      isInSquad,
+      squadId,
+      hasUnlimitedSwipes,
+      profile?.socialDiscoveryEnabled,
+      announceLike,
+    ]
   );
 
   function handleRewind() {
@@ -329,6 +391,18 @@ export default function SwipeScreen() {
       }
     }
     setLastSwiped(null);
+  }
+
+  function handleAreaPress() {
+    if (!hasAreaSelector) {
+      setUpsell({
+        title: 'Pick your own areas',
+        message:
+          'Pro members choose exactly which neighbourhoods to swipe in — perfect for planning a night across town.',
+      });
+      return;
+    }
+    rootNavigation.navigate('AreaSelector');
   }
 
   function handleApplyFilters(filters: VenueFilters) {
@@ -391,6 +465,23 @@ export default function SwipeScreen() {
                   : '🕺 Solo'}
               </Text>
               <Ionicons name="chevron-down" size={13} color={colors.text} />
+            </Pressable>
+          )}
+          {/* Area picker — Pro. Hidden in squad mode: a squad's deck is the
+              union of its members' districts and must stay identical for
+              everyone, so one member re-pointing it would break consensus. */}
+          {!isInSquad && (
+            <Pressable style={styles.filterButton} onPress={handleAreaPress}>
+              <Ionicons
+                name={hasManualAreas ? 'location' : 'map-outline'}
+                size={18}
+                color={hasManualAreas ? colors.primary : colors.text}
+              />
+              {hasManualAreas && (
+                <View style={styles.filterBadge}>
+                  <Text style={styles.filterBadgeText}>{selectedDistrictIds.length}</Text>
+                </View>
+              )}
             </Pressable>
           )}
           <Pressable style={styles.filterButton} onPress={() => setFiltersVisible(true)}>
@@ -539,8 +630,11 @@ export default function SwipeScreen() {
 
       <MatchModal
         venue={matchVenue}
-        memberCount={squad?.members.length ?? 0}
-        onDismiss={() => setMatchVenue(null)}
+        memberCount={isInSquad ? (squad?.members.length ?? 0) : friendMatchCount}
+        onDismiss={() => {
+          setMatchVenue(null);
+          setFriendMatchCount(0);
+        }}
       />
     </View>
   );

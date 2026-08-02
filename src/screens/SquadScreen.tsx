@@ -12,6 +12,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useBottomTabBarHeight, type BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
+import Avatar from '../components/Avatar';
 import ProUpsellModal from '../components/ProUpsellModal';
 import { useAuth } from '../context/AuthContext';
 import { useSquad } from '../context/SquadContext';
@@ -24,12 +25,6 @@ import type { MainTabsParamList } from '../navigation/MainTabs';
 type Props = BottomTabScreenProps<MainTabsParamList, 'Squad'>;
 
 const PIN_LENGTH = 6;
-const AVATAR_COLORS = ['#E63A5B', '#D97706', '#0D9488', '#B45309', '#C2410C', '#BE185D'];
-
-function avatarColorFor(uid: string): string {
-  const sum = uid.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
-  return AVATAR_COLORS[sum % AVATAR_COLORS.length];
-}
 
 export default function SquadScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
@@ -143,9 +138,12 @@ export default function SquadScreen({ navigation }: Props) {
               .toUpperCase();
             return (
               <View key={uid} style={styles.memberRow}>
-                <View style={[styles.memberAvatar, { backgroundColor: avatarColorFor(uid) }]}>
-                  <Text style={styles.memberAvatarText}>{initials || '🍸'}</Text>
-                </View>
+                <Avatar
+                  photoURL={squad.memberPhotos?.[uid]}
+                  initials={initials}
+                  seed={uid}
+                  size={40}
+                />
                 <Text style={styles.memberName} numberOfLines={1}>
                   {name}
                   {uid === user?.uid ? ' (you)' : ''}
@@ -498,14 +496,6 @@ const createStyles = (colors: ThemeColors) =>
       gap: 12,
       paddingVertical: 8,
     },
-    memberAvatar: {
-      width: 40,
-      height: 40,
-      borderRadius: 20,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    memberAvatarText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800' },
     memberName: { color: colors.text, fontSize: 16, fontWeight: '600', flex: 1 },
     hostBadge: {
       backgroundColor: colors.chipActiveBg,

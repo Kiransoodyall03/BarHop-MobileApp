@@ -50,6 +50,8 @@ export interface ConsumerSubscription extends TierLimits {
   hasAdvancedFilters: boolean;
   canRewind: boolean;
   hasVibeCheck: boolean;
+  /** Manual district picker — swipe in an area you aren't standing in. */
+  hasAreaSelector: boolean;
   /** CTA copy for upsells. Pro is the top tier, so Pro users get no pitch. */
   upgradeCtaLabel: string;
   // Usage comparators — pass the caller's current counts.
@@ -87,6 +89,7 @@ export function useConsumerSubscription(): ConsumerSubscription {
     hasAdvancedFilters: isPro,
     canRewind: isPro,
     hasVibeCheck: isPro,
+    hasAreaSelector: isPro,
     // Pro is the top tier, and a Pro user CAN still hit a cap (5 itinerary
     // stops). They get a dismissal, not a pitch for a tier that doesn't exist.
     upgradeCtaLabel: isPro ? 'Got it' : 'Upgrade to Pro',

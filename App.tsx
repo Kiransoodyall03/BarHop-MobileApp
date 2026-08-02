@@ -5,6 +5,8 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider } from './src/context/AuthContext';
 import { SquadProvider } from './src/context/SquadContext';
+import { FriendsProvider } from './src/context/FriendsContext';
+import { AreaSelectionProvider } from './src/context/AreaSelectionContext';
 import AppNavigator from './src/navigation/AppNavigator';
 import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
 import { initializeAds } from './src/ads/adsModule';
@@ -23,8 +25,12 @@ function ThemedApp() {
   return (
     <AuthProvider>
       <SquadProvider>
-        <StatusBar style={mode === 'dark' ? 'light' : 'dark'} />
-        <AppNavigator />
+        <FriendsProvider>
+          <AreaSelectionProvider>
+            <StatusBar style={mode === 'dark' ? 'light' : 'dark'} />
+            <AppNavigator />
+          </AreaSelectionProvider>
+        </FriendsProvider>
       </SquadProvider>
     </AuthProvider>
   );

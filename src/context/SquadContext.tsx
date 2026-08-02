@@ -158,17 +158,20 @@ export function SquadProvider({ children }: PropsWithChildren) {
   const consumerTier = profile?.consumerTier ?? 'free';
   const location = profile?.location ?? null;
 
+  const photoURL = profile?.photoURL ?? null;
+
   const create = useCallback(async () => {
     if (!user) throw new Error('Not signed in');
     const { squadId: newId, pin } = await createSquadDoc(
       user.uid,
       displayName,
       consumerTier,
-      location
+      location,
+      photoURL
     );
     persistSquadId(newId);
     return pin;
-  }, [user, displayName, consumerTier, location, persistSquadId]);
+  }, [user, displayName, consumerTier, location, photoURL, persistSquadId]);
 
   const join = useCallback(
     async (pin: string) => {
@@ -178,11 +181,12 @@ export function SquadProvider({ children }: PropsWithChildren) {
         displayName,
         pin,
         consumerTier,
-        location
+        location,
+        photoURL
       );
       persistSquadId(joinedId);
     },
-    [user, displayName, consumerTier, location, persistSquadId]
+    [user, displayName, consumerTier, location, photoURL, persistSquadId]
   );
 
   const switchTo = useCallback(

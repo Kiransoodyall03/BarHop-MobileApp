@@ -6,6 +6,21 @@
 // Firestore → Rules. Blocks marked "MOBILE APP" are what the consumer app
 // needs; without them every swipe fails with "permission-denied" and the B2B
 // dashboard never receives analytics.
+//
+// ⚠️  A rules deploy REPLACES the entire published ruleset — there is no merge.
+// This file is the CURRENT LIVE ruleset (pulled from the console) plus the
+// DISTRICTS, users tier-pin and VOUCHERS sections; keep it the complete set
+// before every `firebase deploy --only firestore:rules`, or whatever it omits
+// is dropped project-wide. NOTE: squad tier caps ARE now enforced here, but
+// NOT the way the mobile repo previously proposed — that keyed the cap on the
+// squad document's own `tier` field, which the client writes. This file
+// derives it from the host's pinned consumerTier instead; see
+// squadMemberCap() below.
+//
+// ⚠️  This copy was rebased onto the live console ruleset when the FRIENDS
+// section was added. An earlier revision of this file in the mobile repo had
+// drifted (it carried the client-written-`tier` squad cap). If the two ever
+// disagree again, the console is authoritative — re-pull before editing.
 // ─────────────────────────────────────────────────────────────────────────────
 
 rules_version = '2';
@@ -20,42 +35,125 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/venues/$(venueId)).data.ownerId == request.auth.uid;
     }
 
-    // True when a write leaves `field` exactly as it already is — the guard that
-    // keeps billing tiers out of client hands.
-    //
-    // On CREATE `resource` is null, so the incoming value must be absent: a new
-    // user cannot sign up pre-promoted. On UPDATE the incoming value must equal
-    // the stored one. Note a merge write's `request.resource.data` is the
-    // RESULTING document, so an untouched field compares equal and passes.
-    // Only the Admin SDK (Cloud Functions) can change these, and it bypasses
-    // rules entirely.
+    // True only for allowlisted admin accounts — grants the admin console its
+    // broad READ access (live listeners run client-side, so this is required).
+    // Mirrors ADMIN_EMAILS in functions/index.js. Reads only; no admin writes.
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.token.email == 'kiransoodyall03@gmail.com';
+    }
+
+    // The paid subscription tiers. A venue on any of these has an active plan;
+    // 'trial' (or unset) does not. Mirrors TIER_ORDER in
+    // src/hooks/useSubscription.js. Publishing is gated on this server-side so
+    // a client can't bypass the dashboard's check.
+    function isPaidTier(tier) {
+      return tier == 'starter' || tier == 'pro' || tier == 'enterprise';
+    }
+
+    // True when an incoming write leaves `field` exactly as it already is —
+    // the pin used to make a field server-owned on a doc the client otherwise
+    // owns. Reads null on both sides for a create, so a client may create the
+    // doc without the field but can never introduce a value for it.
+    // NOTE: request.resource is null on a DELETE, so this denies client
+    // deletes of the doc entirely. Nothing in either app deletes a user doc
+    // (accounts are disabled, not purged), so that is the intended outcome.
     function tierUnchanged(field) {
       return request.resource.data.get(field, null) ==
              (resource == null ? null : resource.data.get(field, null));
+    }
+
+    // True when an UPDATE either leaves the map at `mapField` untouched, or
+    // changes ONLY the caller's own uid key inside it.
+    //
+    // This is what makes a shared, multi-writer document safe to denormalize
+    // per-member data onto: several people write the same doc, but each may
+    // only speak for themselves. Used for squad member photos/locations and
+    // for friendship profile snapshots.
+    //
+    // Costs NOTHING extra — both sides are already-loaded document data, not
+    // get() calls, so it is safe on hot write paths.
+    // Update-only: `resource` is null on create, so never call this from a
+    // create rule.
+    function onlyTouchesOwnKey(mapField) {
+      let before = resource.data.get(mapField, {});
+      let after = request.resource.data.get(mapField, {});
+      return before == after
+        || after.diff(before).affectedKeys().hasOnly([request.auth.uid]);
+    }
+
+    // Deterministic friendship document ID: the two uids sorted and joined
+    // with '_'. Deriving the ID rather than randomising it makes a duplicate
+    // request structurally impossible and lets either side address the
+    // document without a query — which is what keeps the userLikes read rule
+    // below to a fixed cost regardless of how many friends someone has.
+    function friendshipId(a, b) {
+      return a < b ? a + '_' + b : b + '_' + a;
+    }
+
+    // Two document accesses (exists + get). Both are BILLED reads, and this
+    // runs once per userLikes listener the app opens — i.e. once per friend
+    // per session, not per swipe. Keep it off any hot path.
+    function isAcceptedFriend(me, other) {
+      let fid = friendshipId(me, other);
+      return exists(/databases/$(database)/documents/friendships/$(fid))
+        && get(/databases/$(database)/documents/friendships/$(fid)).data.status == 'accepted';
+    }
+
+    // Maximum squad size for a host, from their SERVER-PINNED consumerTier.
+    // Mirrors the caps the consumer app enforces client-side.
+    //
+    // Anything unrecognised falls back to the free cap — fail closed. ADD NEW
+    // CONSUMER TIERS HERE WHEN THEY SHIP, or their subscribers get capped at 3.
+    // ('elite' is deliberately absent: nothing can currently write it, and it
+    // is being removed from the consumer app rather than specced.)
+    function squadMemberCap(hostId) {
+      return get(/databases/$(database)/documents/users/$(hostId))
+        .data.get('consumerTier', 'free') == 'pro' ? 7 : 3;
     }
 
     // =========================================================
     // USERS COLLECTION
     // =========================================================
     match /users/{userId} {
-      // A user must be logged in, and their UID must perfectly match the document ID.
-      allow read: if request.auth != null && request.auth.uid == userId;
-
-      // MOBILE APP — PAID TIER INTEGRITY. Users own their profile, but must NOT
-      // be able to grant themselves a paid tier: consumerTier gates ads,
-      // unlimited swipes, Pro filters, and the squad member caps enforced below.
-      // Without this clause a client could simply write consumerTier:'pro' and
-      // take every paid feature for free, which makes the paywall decorative.
+      // A user must be logged in, and their UID must perfectly match the doc ID.
+      // Admins additionally get READ access for the admin console.
       //
-      // consumerTier is written ONLY by the revenueCatWebhook Cloud Function
-      // (Admin SDK, which bypasses these rules) after Google Play confirms a
-      // purchase. The same protection applies to the B2B subscriptionTier,
-      // which the Paystack webhook owns.
-      // proGrant* is the voucher-granted Pro window, written only by the
-      // redeemVoucher function. Pinned for the same reason: a client that can
-      // set its own expiry date grants itself unlimited Pro.
+      // ⚠️  This owner-only read is why so much data is denormalized elsewhere:
+      // no user can read another's profile, so squad member names/photos and
+      // friendship profile snapshots are copied onto the shared documents that
+      // both parties CAN read. Do not relax this to "fix" a feature — copy the
+      // one field onto the shared doc instead.
+      allow read: if request.auth != null
+        && (request.auth.uid == userId || isAdmin());
+
+      // PAID TIER INTEGRITY. Users own their profile, but must NOT be able to
+      // grant themselves a paid tier. Without these pins a client could write
+      // consumerTier:'pro' (or a subscriptionTier, or its own proGrant expiry)
+      // and take every paid feature for free, which makes the paywall
+      // decorative.
+      //
+      //   consumerTier*      — MOBILE APP entitlement; gates ads, unlimited
+      //                        swipes and Pro filters. Written ONLY by the
+      //                        revenueCatWebhook function (Admin SDK, which
+      //                        bypasses these rules) after Play confirms a
+      //                        purchase.
+      //   subscriptionTier   — B2B plan, owned by the Paystack webhook. It
+      //                        also unlocks the venue publish gate below, so
+      //                        an unpinned copy here is a way around it.
+      //   proGrant*          — the voucher-granted Pro window, written ONLY by
+      //                        the redeemVoucher function. A client that can
+      //                        set its own expiry grants itself endless Pro.
+      //
+      // Deliberately NOT pinned (client-owned, mobile app): photoURL,
+      // friendCode, socialDiscoveryEnabled, expoPushToken. None of them gate
+      // anything paid — friendCode is a random shareable string,
+      // socialDiscoveryEnabled is the user's own privacy opt-in, and
+      // expoPushToken is the device the user wants notified.
       allow write: if request.auth != null && request.auth.uid == userId
         && tierUnchanged('consumerTier')
+        && tierUnchanged('consumerTierUpdatedAt')
+        && tierUnchanged('consumerTierSource')
         && tierUnchanged('subscriptionTier')
         && tierUnchanged('proGrantExpiresAt')
         && tierUnchanged('proGrantCode');
@@ -64,6 +162,10 @@ service cloud.firestore {
       // Subcollection rules do NOT inherit from the parent match, so this is
       // required. The consumer app writes one doc per swiped venue here and
       // reads the collection on launch to filter the deck.
+      //
+      // Stays strictly private even between friends. Friend matching reads
+      // userLikes/{uid} instead — a separate, opt-in, right-swipes-only
+      // projection. A friend must never see that you swiped LEFT on somewhere.
       match /swipedVenues/{venueId} {
         allow read, write: if request.auth != null && request.auth.uid == userId;
       }
@@ -79,12 +181,41 @@ service cloud.firestore {
       // full read access. The app's query filters where('published','==',true),
       // which this rule permits.
       allow read: if request.auth != null
-        && (resource.data.ownerId == request.auth.uid || resource.data.published == true);
+        && (resource.data.ownerId == request.auth.uid
+          || resource.data.published == true
+          || isAdmin());
 
-      // Owners can update/delete only venues they own.
-      allow update, delete: if request.auth != null && resource.data.ownerId == request.auth.uid;
-      // Users can only create a venue if they set themselves as the owner.
-      allow create: if request.auth != null && request.resource.data.ownerId == request.auth.uid;
+      // Owners can delete only venues they own.
+      allow delete: if request.auth != null && resource.data.ownerId == request.auth.uid;
+
+      // Owners can update only venues they own, subject to two server-side
+      // guards that back the dashboard's client-side gating:
+      //   1. subscriptionTier is server-owned — set exclusively by the
+      //      Paystack webhook (Admin SDK, which bypasses these rules). An
+      //      owner can never change it, so they can't self-upgrade to unlock
+      //      the publish gate below.
+      //   2. Publishing is a paid feature: a venue may flip published
+      //      false → true only while on an active paid plan. Unpublishing and
+      //      ordinary content edits are always allowed.
+      allow update: if request.auth != null
+        && resource.data.ownerId == request.auth.uid
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.get('subscriptionTier', 'trial')
+           == resource.data.get('subscriptionTier', 'trial')
+        && (
+          !(resource.data.get('published', false) == false
+            && request.resource.data.get('published', false) == true)
+          || isPaidTier(resource.data.get('subscriptionTier', 'trial'))
+        );
+
+      // A user can only create a venue they own, and it must start
+      // unpublished on the free trial — the Paystack webhook is the only
+      // thing that upgrades the tier or publishes, so this blocks a client
+      // seeding a paid/published venue directly.
+      allow create: if request.auth != null
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.get('published', false) == false
+        && request.resource.data.get('subscriptionTier', 'trial') == 'trial';
 
       // --- VIP RESERVATIONS SUBCOLLECTION ---
       match /reservations/{reservationId} {
@@ -98,34 +229,56 @@ service cloud.firestore {
         allow read, write: if request.auth != null && isVenueOwner(venueId);
       }
 
-      // --- ANALYTICS SUBCOLLECTION (daily swipe logs) ---
+      // --- ANALYTICS SUBCOLLECTION (daily interaction logs) ---
       match /analytics/{analyticsId} {
-        // Owner (B2B dashboard): full access — reads every field, writes
-        // matchRate / clickThroughs / etc.
+        // Owner (B2B dashboard): full access — reads every field, writes any
+        // server/owner-derived aggregate.
         allow read, write: if request.auth != null && isVenueOwner(venueId);
 
-        // MOBILE APP: a signed-in consumer may record a swipe by CREATING
-        // today's counter doc — only the three counter fields, exactly one
-        // swipe's worth (swipedRight + swipedLeft == 1).
+        // MOBILE APP: a signed-in consumer may record ONE interaction by
+        // CREATING today's counter doc. Exactly one counter across the whole
+        // set may be 1; everything else must be 0 or absent.
+        //
+        // Adding a name to this list makes it writable by ANY signed-in user.
+        // Keep it to counters the dashboard treats as directional signal,
+        // never as authoritative revenue or billing data.
+        //
+        // groupMatches is deliberately ABSENT. A squad match is one event but
+        // N devices observe it — every member derives it independently from
+        // the shared squad doc, so N members would each pass this rule and
+        // inflate the count 3-7x. It is written server-side instead, by the
+        // onSquadMatch trigger (Admin SDK, bypasses these rules), which fires
+        // once per squad per venue off the squad document's own transition.
+        //
+        // ⚠️  A friend-match counter would have the SAME problem for the same
+        // reason (both parties' devices derive the match independently from
+        // shared likes). If one is ever wanted, add it server-side off
+        // userLikes — never to this client-writable list.
         allow create: if request.auth != null
-          && request.resource.data.keys().hasOnly(['date', 'swipedRight', 'swipedLeft'])
+          && request.resource.data.keys().hasOnly(['date', 'swipedRight', 'swipedLeft', 'clickThroughs'])
           && request.resource.data.date is timestamp
           && request.resource.data.get('swipedRight', 0) is int
           && request.resource.data.get('swipedLeft', 0) is int
+          && request.resource.data.get('clickThroughs', 0) is int
           && request.resource.data.get('swipedRight', 0) >= 0
           && request.resource.data.get('swipedLeft', 0) >= 0
+          && request.resource.data.get('clickThroughs', 0) >= 0
           && request.resource.data.get('swipedRight', 0)
-             + request.resource.data.get('swipedLeft', 0) == 1;
+             + request.resource.data.get('swipedLeft', 0)
+             + request.resource.data.get('clickThroughs', 0) == 1;
 
-        // …or bumping the counters on an existing doc, one swipe at a time,
-        //    without touching any owner-written fields and never decreasing.
+        // …or bumping the counters on an existing doc, one interaction at a
+        //    time, without touching any owner-written field and never
+        //    decreasing.
         allow update: if request.auth != null
           && request.resource.data.diff(resource.data).affectedKeys()
-               .hasOnly(['date', 'swipedRight', 'swipedLeft'])
+               .hasOnly(['date', 'swipedRight', 'swipedLeft', 'clickThroughs'])
           && request.resource.data.get('swipedRight', 0) >= resource.data.get('swipedRight', 0)
           && request.resource.data.get('swipedLeft', 0) >= resource.data.get('swipedLeft', 0)
+          && request.resource.data.get('clickThroughs', 0) >= resource.data.get('clickThroughs', 0)
           && (request.resource.data.get('swipedRight', 0) - resource.data.get('swipedRight', 0))
-             + (request.resource.data.get('swipedLeft', 0) - resource.data.get('swipedLeft', 0)) == 1;
+             + (request.resource.data.get('swipedLeft', 0) - resource.data.get('swipedLeft', 0))
+             + (request.resource.data.get('clickThroughs', 0) - resource.data.get('clickThroughs', 0)) == 1;
       }
     }
 
@@ -136,68 +289,156 @@ service cloud.firestore {
     // mechanism) and update it (joining adds yourself; right-swipes append to
     // the likes map). Post-MVP hardening: restrict updates to self-joins and
     // member-only like-writes via request.resource.data.diff().
+    //
+    // ⚠️  PRIVACY NOTE — read is open to ANY signed-in user, not just members,
+    // because PIN lookup happens before you're a member. memberLocations
+    // therefore inherits that exposure: a squad's PIN is effectively a
+    // capability to see its members' last shared position. The PIN is short
+    // and random, positions are only written while a member is actively in the
+    // app, and they are deleted on leave — but if live location is ever
+    // widened beyond the active squad, tighten this read first.
     match /squads/{squadId} {
       allow read: if request.auth != null;
       allow create: if request.auth != null
         && request.resource.data.hostId == request.auth.uid;
-      // Server-side member caps per squad tier (free ≤ 3, pro ≤ 7, elite
-      // uncapped) — holds even if a client bypasses the app's checks.
+
+      // Server-side member cap, keyed on the HOST'S PINNED TIER.
+      //
+      // The squad document carries its own `tier` field, but the client writes
+      // it at creation — so a cap keyed on that is self-declared, and a
+      // modified client bypasses it by simply claiming 'pro'. This reads
+      // users/{hostId}.consumerTier instead, which only the RevenueCat webhook
+      // can write (tierUnchanged() above), and is therefore the one copy of
+      // the tier a client cannot forge.
+      //
+      // Ordered so the free cap is checked FIRST: rules short-circuit `||`, so
+      // the extra document read only happens for a squad actually trying to
+      // exceed 3 members. Ordinary squads — and every right-swipe write, which
+      // is the hot path — never pay for it.
+      //
+      // hostId is pinned on update because the cap is derived from it; without
+      // this, a client could point the squad at any Pro user's uid and inherit
+      // their cap.
+      //
+      // memberPhotos / memberLocations are additionally scoped to the caller's
+      // own uid key: these carry a member's avatar URL and last known
+      // position, and one member must not be able to move another's pin or
+      // swap their photo. Both are field comparisons on already-loaded data,
+      // so they add no read cost to the hot path.
+      // (memberNames predates this and is left open to match existing
+      // behaviour; it only ever receives own-key writes in the app, so it
+      // could take the same treatment whenever the squad rules are hardened.)
       allow update: if request.auth != null
+        && request.resource.data.hostId == resource.data.hostId
+        && onlyTouchesOwnKey('memberPhotos')
+        && onlyTouchesOwnKey('memberLocations')
         && (
-          request.resource.data.get('tier', 'free') == 'elite'
-          || (request.resource.data.get('tier', 'free') == 'pro'
-              && request.resource.data.members.size() <= 7)
-          || (request.resource.data.get('tier', 'free') == 'free'
-              && request.resource.data.members.size() <= 3)
+          request.resource.data.members.size() <= 3
+          || request.resource.data.members.size()
+             <= squadMemberCap(resource.data.hostId)
         );
       // no delete — squads end via isActive: false
     }
 
     // =========================================================
-    // VOUCHER CODES (1-month Pro giveaways)
+    // FRIENDS (mobile app — asynchronous solo matching)
     // =========================================================
-    // Clients get NO access at all — not even read. If the app could read
-    // voucherCodes, any user could dump the collection and redeem every code in
-    // it; if it could read voucherRedemptions it could enumerate who redeemed
-    // what. All redemption happens inside the redeemVoucher callable, which
-    // uses the Admin SDK and bypasses these rules.
-    match /voucherCodes/{code} {
-      allow read, write: if false;
-    }
+    // Deliberately NOT modelled on squads. A squad is a synchronous session
+    // with one shared deck and all-member consensus; a friendship is a
+    // persistent pairwise link where each side keeps swiping their own solo
+    // deck and matches are found afterwards.
 
-    match /voucherRedemptions/{redemptionId} {
-      allow read, write: if false;
-    }
-
-    // =========================================================
-    // DISTRICT VENUE CACHE (auto-created venue cards)
-    // =========================================================
-    // MOBILE APP: the shared places cache. The refreshDistrictVenues scheduled
-    // function calls Foursquare ONCE per district per day and writes the
-    // result here; every user in that district then reads one document
-    // instead of making their own API call (1 000 users ⇒ 1 API call, not
-    // 1 000). Reads are open to any signed-in consumer.
+    // The ONLY way one user can find another. users/{uid} is owner-read-only,
+    // so `where('friendCode','==',x)` can never work — the same constraint the
+    // squad PIN solves with a world-readable squad doc.
     //
-    // Writes are denied to EVERYONE. The function uses the Admin SDK, which
-    // bypasses these rules entirely — so `allow write: if false` costs the
-    // function nothing and guarantees no client can poison a district's cache
-    // for every other user in it.
-    // The hand-curated district registry the scheduled function reads. Pure
-    // server-side config (center, radiusM, active) — edited in the Firebase
-    // console, never touched by any client. Clients read districtIndex/current
-    // instead, which the function derives from this.
-    match /districts/{districtId} {
-      allow read, write: if false;
+    // Holding a code only lets you REQUEST; it is not itself access to
+    // anything. Codes are random over a 31-character alphabet and are created
+    // once, by their owner, and never rewritten — so a code cannot be
+    // repointed at a different account after it has been shared.
+    match /friendCodes/{code} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.keys().hasOnly(['uid', 'createdAt']);
+      allow update, delete: if false;
     }
 
-    match /districtIndex/{document} {
-      allow read: if request.auth != null;
-      allow write: if false;
+    // Readable and writable ONLY by the two participants. The `users` array is
+    // denormalized onto the document so this is a field comparison rather than
+    // a get() — which is what keeps it clear of the per-request
+    // document-access limit no matter how many friends someone has.
+    match /friendships/{pairId} {
+      // The `resource == null` arm is LOAD-BEARING, not defensive padding.
+      // Sending a request starts with a transactional get() of the pair
+      // document, which normally does NOT exist yet — and for a missing
+      // document Firestore evaluates this rule with `resource` null, so
+      // `resource.data.users` would throw and the read would be DENIED. That
+      // denial would break every first-time friend request.
+      //
+      // The cost is a narrow oracle: someone who already knows two uids can
+      // tell "not friends" (returns empty) from "friends" (denied). uids are
+      // never exposed by the app — users/{uid} is owner-only and there is no
+      // user directory — so knowing both already implies more access than this
+      // leaks.
+      allow read: if request.auth != null
+        && (resource == null || request.auth.uid in resource.data.users);
+
+      // A request may only be created BY one of its two participants, must
+      // start pending, and must be attributed to the caller — so nobody can
+      // forge a friendship or create one that is already accepted.
+      allow create: if request.auth != null
+        && request.auth.uid in request.resource.data.users
+        && request.resource.data.users.size() == 2
+        && request.resource.data.status == 'pending'
+        && request.resource.data.requestedBy == request.auth.uid;
+
+      // CONSENT IS THE WHOLE POINT of this rule, so it is worth spelling out.
+      // Without the status clause the REQUESTER could flip their own pending
+      // request to 'accepted' and befriend someone who never agreed — which
+      // would then hand them read access to that person's userLikes below.
+      // A pending → accepted transition is therefore allowed only for the
+      // party who did NOT send it.
+      //
+      // users and requestedBy are pinned so the pair and its authorship can't
+      // be rewritten after the fact, and profiles is scoped to the caller's
+      // own key so neither side can spoof the other's display name, photo, or
+      // — most importantly — their push token.
+      allow update: if request.auth != null
+        && request.auth.uid in resource.data.users
+        && request.resource.data.users == resource.data.users
+        && request.resource.data.requestedBy == resource.data.requestedBy
+        && onlyTouchesOwnKey('profiles')
+        && (
+          request.resource.data.status == resource.data.status
+          || (resource.data.status == 'pending'
+              && request.resource.data.status == 'accepted'
+              && request.auth.uid != resource.data.requestedBy)
+        );
+
+      // Either side may delete — this is both "decline" and "unfriend". It is
+      // also the revocation mechanism for the userLikes read below, which is
+      // why removal is a delete rather than a status flag.
+      allow delete: if request.auth != null && request.auth.uid in resource.data.users;
     }
 
-    match /districtVenues/{districtId} {
-      allow read: if request.auth != null;
-      allow write: if false;
+    // Venue IDs a user right-swiped in SOLO mode — the projection friends read
+    // to derive matches. Written ONLY under the user's explicit
+    // socialDiscoveryEnabled opt-in (enforced client-side; the field itself is
+    // theirs to set), and containing right-swipes only, never lefts.
+    //
+    // One document per user rather than copying likes into every friendship:
+    // the fan-out shape costs one write per friend per swipe, which turns a
+    // 15-swipe session with 50 friends into 750 writes. Here it is one
+    // arrayUnion per swipe regardless of friend count, and the intersection
+    // that produces a match is computed on the client.
+    //
+    // Read access is derived live from the friendship document, so deleting a
+    // friendship revokes it immediately with no cleanup pass.
+    match /userLikes/{ownerUid} {
+      allow read: if request.auth != null
+        && (request.auth.uid == ownerUid || isAcceptedFriend(request.auth.uid, ownerUid));
+      allow write: if request.auth != null && request.auth.uid == ownerUid;
     }
 
     // =========================================================
@@ -211,6 +452,75 @@ service cloud.firestore {
         (exists(/databases/$(database)/documents/squads/$(itineraryId)) &&
          request.auth.uid in get(/databases/$(database)/documents/squads/$(itineraryId)).data.members)
       );
+    }
+
+    // =========================================================
+    // VOUCHERS — time-boxed Pro giveaway codes
+    // =========================================================
+    // Consumers get NO access at all, not even read: if the mobile app could
+    // read voucherCodes any user could dump the collection and redeem every
+    // code in it, and voucherRedemptions would let them enumerate who redeemed
+    // what. Redemption happens entirely inside the redeemVoucher callable,
+    // which uses the Admin SDK and bypasses these rules.
+    //
+    // The one exception is the allowlisted admin account, which generates and
+    // retires codes from the Admin Console → Vouchers tab client-side (same
+    // pattern as the console's other live listeners). Redemptions stay
+    // read-only even for the admin — redemptionCount is a ledger the callable
+    // increments inside its transaction, and a hand-edit would hand out extra
+    // uses of a spent code.
+    match /voucherCodes/{code} {
+      allow read, write: if isAdmin();
+    }
+
+    match /voucherRedemptions/{redemptionId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // =========================================================
+    // DISTRICTS — server-only config + shared Foursquare snapshots
+    // =========================================================
+    // Written EXCLUSIVELY by the refreshDistrictVenues scheduled Cloud Function
+    // through the Admin SDK, which BYPASSES these rules — so every client write
+    // is denied (`if false`) at no cost to the function, and no client can
+    // poison a district's shared cache for everyone else in it.
+    //
+    // districts/{id}: the hand-curated registry the function reads (center,
+    // radiusM, active). Pure server config — edited in the Firebase console,
+    // never client-readable. The app reads districtIndex/current instead.
+    match /districts/{districtId} {
+      // Server-only config; admins may read it in the console.
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // districtIndex/current: one small doc listing active districts, so the app
+    // locates a user's district in a single read. MOBILE APP: read-only.
+    // Also backs the Pro area picker, which renders every active district as a
+    // selectable region from this one document.
+    match /districtIndex/{document} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    // districtVenues/{districtId}: the shared per-district stub deck the app
+    // fans out to every user in that district. MOBILE APP: read-only.
+    // The area picker reads these lazily (on selection) for venue counts, so a
+    // user browsing areas pays one read per district they actually tap.
+    match /districtVenues/{districtId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    // =========================================================
+    // API USAGE (admin console)
+    // =========================================================
+    // Per-month Foursquare call counters written by the Cloud Functions
+    // (Admin SDK, bypasses rules). Admin-console READ only.
+    match /apiUsage/{document} {
+      allow read: if isAdmin();
+      allow write: if false;
     }
 
   }

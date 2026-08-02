@@ -1,5 +1,112 @@
 # Release Notes
 
+> ⚠️ **Version numbering needs reconciling.** `app.json` currently reads
+> `1.0.5`, but the entry below is headed `v1.1.0`. The 1.0.x line is what
+> actually shipped. Decide which scheme you're on and correct the headings
+> before tagging this release — `versionCode` is handled by EAS, but the
+> user-facing `version` in `app.json` is not.
+
+## v1.1.0 — 2026-07-30
+
+Squad mode is the theme: the squad deck was returning nothing, and squads you'd
+joined were unreachable once you joined another. Plus a wider free filter and a
+forced-update path for closed testing.
+
+---
+
+### Play Console — "What's new"
+
+> Copy-paste. 421 characters, inside the 500 limit.
+
+Squads, properly.
+
+• Squad decks now combine everyone's local spots — one shared stack the whole crew swipes together
+• Switch between solo and any of your squads straight from the deck, without losing your place
+• Your other squads are reachable again instead of disappearing when you join a new one
+• More filters on the free tier: bar, club, cocktail bar and restaurant
+
+Fixed: squad decks came up empty.
+
+### Fixed
+
+- Squad decks came up empty.
+
+  Stubs were excluded from squad decks on purpose: they resolve from the
+  *viewer's* location, so members in different districts would get different
+  decks, and a card one member never saw can never reach consensus. The fix is a
+  union rather than a per-viewer lookup — see below.
+
+
+### Added
+
+- **Squad decks are now the union of every member's districts.**
+
+- **Solo ⇄ squad switcher.**
+
+- **Forced in-app updates.**
+
+### Changed
+
+- **Free tier gets four genre filters** — `bar`, `club`, `cocktail bar`,
+  `restaurant`.
+  
+  Squad filters are deliberately **never** sanitized — every member must apply
+  the identical host-set filters or their decks diverge and matching breaks.
+
+### Internal
+
+- `fetchStubsForDistricts` split out of `fetchDistrictStubs`; both still call
+  `rememberStubs`, which is load-bearing — stubs have no `venues/{id}` doc, so
+  skipping it makes matched venues vanish from itineraries.
+- `SquadContext` now runs one list listener and derives the active squad from
+  it, replacing the single-doc listener. Self-healing falls out for free.
+- `loadDeck` gained `squadId` + `deckDistrictsKey` deps (an A→B squad switch was
+  reusing the stale deck) and a sequence guard so rapid switching can't paint an
+  older response.
+- `canCreateMoreSquads` finally has a caller.
+
+---
+
+### ⚠️ Requires a new native build
+
+`sp-react-native-in-app-updates` is a native module and this project uses Expo
+CNG, so the existing dev client will not pick it up:
+
+```bash
+eas build --profile development --platform android   # dev
+eas build --profile production  --platform android   # store
+```
+
+### Deploy notes
+
+- **No Firestore rules change.** The `squads` update rule constrains only `tier`
+  and member count; `deckDistrictIds` is permitted as-is.
+- **Depends on an existing composite index** (`members` array-contains +
+  `isActive` ==). `countActiveSquads` already runs that exact query in
+  production, so it should exist — and if it doesn't, the switcher degrades to a
+  no-op rather than breaking squads.
+- **`refreshDistrictVenues` is now a hard dependency of squad decks**, not just
+  solo. If it stops running, squad decks degrade to published-venues-only.
+
+### Testing the update flow
+
+Local and sideloaded builds **cannot** exercise the Play API — it rejects, and
+the code swallows that by design. Use Internal App Sharing: upload the current
+AAB, install from the link, then upload a higher `versionCode` and reopen.
+
+### Known limitations
+
+- A member joining from a distant district enlarges the deck for everyone. That
+  is intended, but a squad spanning Johannesburg and Cape Town gets a deck
+  neither member can act on.
+- Distance filtering stays disabled in squad mode — a union has no single origin
+  to measure from.
+- Members can hold district snapshots up to 6h apart (local cache TTL vs daily
+  server refresh), so stub sets can differ slightly. The failure mode is a
+  *missed* match, never a false one.
+
+---
+
 ## v1.1.0 — 2026-07-29
 
 First release since the cross-repo contract reconciliation with the Creator

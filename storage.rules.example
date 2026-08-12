@@ -16,10 +16,15 @@ service firebase.storage {
     // shown to squadmates via denormalized memberPhotos on the squad doc,
     // same read posture as a display name); only the owning uid may write
     // their own file.
-    match /avatars/{uid}.jpg {
+    //
+    // ⚠️  The wildcard captures the WHOLE filename and the extension is checked
+    // in the condition. `match /avatars/{uid}.jpg` looks natural but is a
+    // syntax error — a wildcard must occupy an entire path segment, so a
+    // literal suffix after `}` fails to parse ("Unexpected '.'").
+    match /avatars/{fileName} {
       allow read: if request.auth != null;
       allow write: if request.auth != null
-        && request.auth.uid == uid
+        && fileName == request.auth.uid + '.jpg'
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
     }

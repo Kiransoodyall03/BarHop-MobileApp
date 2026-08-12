@@ -13,18 +13,25 @@
 //     the other repo owns — both deploy into the same Firebase project.
 //
 // ── Why this exists ─────────────────────────────────────────────────────────
-//11
+//
 // Calling a places API per user does not scale: 1 000 people in one district
 // would mean 1 000 identical calls (~$7 000/month at Foursquare's Pro rate).
 // Caching in the app does not fix it either — app memory is per-device, so
 // 1 000 devices still make 1 000 calls. The cache has to be SHARED.
 //
-// So the call happens exactly once per district per day, here, and the result
-// is fanned out through Firestore. Cost is a function of DISTRICT COUNT and is
-// completely independent of how many users the app has:
+// So the call happens exactly once per district per RUN, here, and the result
+// is fanned out through Firestore. Cost is a function of DISTRICT COUNT and
+// cadence, and is completely independent of how many users the app has:
 //
-//     20 districts × 1/day × 30 days = 600 calls/month ≈ $1.50
-//     (first 500 Pro calls are free; ≤16 districts is free outright)
+//     22 districts × 15.5 runs/month = ~341 calls/month (352 ceiling)
+//     (11 Gauteng + 6 Cape Town + 5 Durban north coast, refreshed every 2 days)
+//
+// ⚠️ The free-allowance figure below (10 000 Pro calls) CONTRADICTS the webapp
+// repo's copy of this function, which works off 500. Neither has been checked
+// against current Foursquare pricing — and it is moot for THIS function either
+// way, because naming `photos` reprices every call to Premium, which has no
+// free allowance at all. Resolve it against the live docs before relying on
+// either number for a budget decision.
 //
 // ── Pricing: this function runs at PREMIUM rate, deliberately ───────────────
 //
@@ -38,17 +45,17 @@
 // orders of magnitude:
 //
 //   THIS approach — photos inline via `fields` on the district search.
-//   Still ONE call per district per day; only the rate changes.
-//       11 districts × 30 days = 330 calls ≈ $6.19/month
+//   Still ONE call per district per run; only the rate changes.
+//       22 districts × 15.5 runs = ~341 calls ≈ $6.39/month
 //
 //   The trap — a separate Place Photos call per venue.
-//       20 districts × 50 venues × 30 days = 30 000 calls ≈ $562/month
+//       22 districts × 50 venues × 15.5 runs = ~17 050 calls ≈ $320/month
 //
 // So: never fetch photos per venue. Fetching them per DISTRICT is cheap, and is
 // what the `fields` list below does.
 //
 // Hours and ratings are still NOT requested. They are premium too, but unlike
-// photos they change fast enough that a daily snapshot would be misleading —
+// photos they change fast enough that a 2-day-old snapshot would be misleading —
 // the card handles their absence ("Hours TBD"). Adding them costs nothing extra
 // now that the call is already Premium, but only add them if the staleness is
 // acceptable.
@@ -101,15 +108,28 @@ const PLACE_FIELDS = [
 // phone without paying for detail nobody sees.
 const PHOTO_SIZE = '800x800';
 
-const SNAPSHOT_TTL_HOURS = 36; // > the 24h refresh, so a skipped run isn't fatal
+// Sized to survive one SKIPPED run, not just the normal gap. `*/2` is a
+// day-of-month step, so it restarts at day 1 each month — but every boundary
+// gap is 24h (an EARLY refresh: the 31st is followed by the 1st) or 48h, never
+// longer, so 48h is the true worst case. Two cycles is 96h; 108h clears that
+// with 12h of margin. The old 36h value did not survive a skipped daily run
+// despite claiming to.
+const SNAPSHOT_TTL_HOURS = 108;
 
 exports.refreshDistrictVenues = onSchedule(
   {
-    // Daily, not hourly. Venue EXISTENCE changes over weeks — a bar does not
-    // open or close within six hours — and every genuinely fast-moving field
-    // (hours, ratings, photos) is premium and deliberately not fetched. A
-    // faster cadence would multiply cost while changing nothing.
-    schedule: 'every day 04:00',
+    // Every SECOND day at 04:00, not daily and certainly not hourly. Venue
+    // EXISTENCE changes over weeks — a bar does not open or close within six
+    // hours — so halving the cadence halves spend while changing nothing a user
+    // would notice. Raised from daily when the registry went from 11 districts
+    // to 22 (Cape Town + Durban north coast).
+    //
+    // Written as raw cron rather than 'every 48 hours' because the latter is
+    // relative to the previous run and drifts; this pins it to 04:00 local.
+    // True 48h is not expressible in cron: `*/2` steps day-of-month and
+    // restarts at the 1st, so 7 month-boundaries a year refresh after 24h
+    // instead of 48h. Always EARLY, never late, so no snapshot outlives its TTL.
+    schedule: '0 4 */2 * *',
     timeZone: 'Africa/Johannesburg',
     secrets: [FOURSQUARE_API_KEY],
     retryCount: 1,

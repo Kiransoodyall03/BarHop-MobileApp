@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import { useFriends } from '../context/FriendsContext';
 import { ensureFriendCode, FriendRequestError } from '../services/friendService';
+import { describeFirebaseError } from '../utils/firebaseErrors';
 import { useTheme, useThemedStyles } from '../theme/ThemeContext';
 import type { ThemeColors } from '../theme/colors';
 
@@ -43,6 +44,7 @@ export default function AddFriendModal({
   const [myCode, setMyCode] = useState<string | null>(profile?.friendCode ?? null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [codeError, setCodeError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
   // Generate the user's own code the first time they open this sheet, so a
@@ -54,8 +56,16 @@ export default function AddFriendModal({
       return;
     }
     ensureFriendCode(user.uid, profile?.friendCode)
-      .then(setMyCode)
-      .catch((err) => console.warn('[AddFriendModal] code generation failed:', err));
+      .then((code) => {
+        setMyCode(code);
+        setCodeError(null);
+      })
+      .catch((err) => {
+        console.warn('[AddFriendModal] code generation failed:', err);
+        setCodeError(
+          describeFirebaseError(err, 'Could not create your friend code.')
+        );
+      });
   }, [visible, user, profile?.friendCode]);
 
   useEffect(() => {
@@ -78,10 +88,14 @@ export default function AddFriendModal({
       await addFriendByCode(code);
       setSuccess('Request sent! They just need to accept.');
     } catch (err) {
+      console.warn('[AddFriendModal] friend request failed:', err);
       setError(
         err instanceof FriendRequestError
           ? err.message
-          : 'Could not send that request. Check your connection and try again.'
+          : describeFirebaseError(
+              err,
+              'Could not send that request. Check your connection and try again.'
+            )
       );
     } finally {
       setBusy(false);
@@ -161,10 +175,14 @@ export default function AddFriendModal({
               <View style={styles.divider} />
 
               <Text style={styles.myCodeLabel}>Your code</Text>
-              <Pressable style={styles.myCodeRow} onPress={handleShare} disabled={!myCode}>
-                <Text style={styles.myCodeText}>{myCode ?? '······'}</Text>
-                <Ionicons name="share-outline" size={19} color={colors.primary} />
-              </Pressable>
+              {codeError ? (
+                <Text style={styles.errorText}>{codeError}</Text>
+              ) : (
+                <Pressable style={styles.myCodeRow} onPress={handleShare} disabled={!myCode}>
+                  <Text style={styles.myCodeText}>{myCode ?? '······'}</Text>
+                  <Ionicons name="share-outline" size={19} color={colors.primary} />
+                </Pressable>
+              )}
 
               <Pressable style={styles.laterButton} onPress={handleClose} hitSlop={8}>
                 <Text style={styles.laterText}>Cancel</Text>

@@ -45,8 +45,15 @@ export function isStubVenueId(id: string): boolean {
   return id.startsWith(STUB_ID_PREFIX);
 }
 
-// L2 lifetime. The server refreshes daily, so anything under a day is safe;
-// 6h keeps the deck reasonably fresh while collapsing most Firestore reads.
+// L2 lifetime. The server refreshes every SECOND day (cron `0 4 */2 * *`), so
+// any value under 48h is safe; 6h keeps the deck reasonably fresh while
+// collapsing most Firestore reads.
+//
+// NOTE: this is the only staleness bound in the app. Nothing here reads the
+// snapshot's `expiresAt` — an expired L2 entry falls through to Firestore and
+// re-reads whatever is there, however old. If the refresh job stops (dead key,
+// out of Foursquare credits, deleted by an unscoped deploy) the deck keeps
+// serving the last snapshot indefinitely, with no signal to the user or to us.
 const L2_TTL_MS = 6 * 60 * 60 * 1000;
 
 const INDEX_KEY = 'barhop.districtIndex.v1';

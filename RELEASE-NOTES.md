@@ -1,10 +1,205 @@
 # Release Notes
 
-> ⚠️ **Version numbering needs reconciling.** `app.json` currently reads
-> `1.0.5`, but the entry below is headed `v1.1.0`. The 1.0.x line is what
-> actually shipped. Decide which scheme you're on and correct the headings
-> before tagging this release — `versionCode` is handled by EAS, but the
-> user-facing `version` in `app.json` is not.
+> ⚠️ **Version numbering is now genuinely ambiguous — resolve before tagging.**
+> `app.json` reads `1.1.0`, and **three** entries in this file are headed
+> `v1.1.0` (2026-08-02, 2026-07-30, 2026-07-29). They are three different
+> releases sharing one version name, so a store listing, a crash report and a
+> release note can no longer be matched to each other.
+>
+> The 2026-08-02 entry adds friends, matching, push notifications and a new Pro
+> feature — by any reading that is a minor bump, not a re-release. **Recommend
+> heading it `v1.2.0` and setting `app.json` to match.** EAS handles
+> `versionCode`; the user-facing `version` is not automatic.
+
+## v1.1.0 — "The I Finally Have Friends Update" — 2026-08-02
+
+The app stops being single-player. Add friends by code and match on the places
+you've both swiped right on, entirely outside squad mode. Plus profile
+pictures, live squad locations on the map, push notifications, and a Pro area
+picker that lets you swipe somewhere you aren't standing.
+
+---
+
+### Play Console — "What's new"
+
+> Copy-paste. 386 characters, inside the 500 limit.
+
+```
+Friends are here.
+
+• Add friends with your BarHop code — you'll match on places you both swiped right on
+• Set a profile picture, and watch your squad move on the map in real time
+• Get notified the second a friend matches with you
+• PRO: pick exactly which areas to swipe in, straight off the map
+
+Your solo likes stay private until you turn matching on — and squad swipes never count.
+```
+
+---
+
+### Added
+
+- **Friends, and cross-friend matching.** Add someone with a six-character
+  friend code (or a `barhop://friend/CODE` link you can send over WhatsApp),
+  and any venue you have *both* right-swiped in solo mode becomes a match. A
+  new Friends tab lists your friends, pending requests, and every match, and
+  each match can go straight onto tonight's plan.
+
+  Squads are synchronous and consensus-based; this is the opposite by design —
+  asynchronous, pairwise, and matched from swiping you'd have done anyway.
+
+- **Profile pictures.** Pick one in Edit Profile and it appears on your
+  profile, in your squad's lobby, and on the itinerary map. `photoURL` existed
+  before but was only ever set at Google sign-up and never displayed — every
+  avatar in the app was initials.
+
+- **Live squad locations.** The itinerary map now shows you and your active
+  squad as moving avatars rather than a generic blue dot.
+
+- **Push notifications**, new to the app entirely. Currently used for one
+  thing: telling you a friend just matched with you.
+
+- **PRO — Area picker.** Tap a district on the map to see how many venues it
+  holds, what it's known for, and how many places in it your friends have
+  liked. Pick one or several and the deck rebuilds from exactly those areas,
+  including areas you aren't anywhere near — which makes planning a night
+  across town work properly for the first time.
+
+### Changed
+
+- **Location is now live, not a one-shot capture.** The Location row used to
+  store a single fix when you tapped it. It now tracks continuously while the
+  Profile or Itinerary screen is open.
+
+  **Foreground only, by choice** — no background permission is requested, so
+  tracking stops when the app is closed and a squadmate's pin simply goes
+  stale. Writes are throttled twice over (a 10s/20m OS filter plus a 15s
+  app-level floor) so continuous tracking costs about four writes a minute
+  rather than one per GPS tick.
+
+- **Distance filtering is skipped when you've picked areas manually**, the same
+  way it already is in squad mode. Measuring from where you're standing would
+  empty the deck the moment you picked a district across the city.
+
+- **The area picker is hidden in squad mode.** A squad's deck is the union of
+  its members' districts and has to stay identical for everyone; letting one
+  member re-point it would break consensus matching.
+
+### Privacy
+
+- **Matching is opt-in and off by default.** Nothing is written to the document
+  friends read until you turn on "Match with friends". Turning it back off
+  **deletes** what was already shared rather than just halting new writes.
+- **Left-swipes are never shared.** Friends read a right-swipes-only
+  projection; your actual swipe history stays owner-only.
+- **Squad swipes never count toward friend matching.** A group compromise isn't
+  a statement of personal taste.
+- **Live location never crosses into the friend graph.** It stays scoped to
+  your active squad. "Friends liked places here" in the area picker is derived
+  from shared likes, not anyone's position.
+- Removing a friend revokes their read access immediately — the permission is
+  derived live from the friendship document, so there's no cleanup pass to lag
+  behind.
+
+### Fixed
+
+- **Rewinding a swipe left a phantom match.** Pro Rewind deleted the swipe
+  record but not the shared like, so a match could survive a venue you'd taken
+  back. Both are now one batched write.
+
+### Security
+
+- **A consent hole in the friendship rules, caught before deploy.** Nothing
+  guarded the `status` transition, so the *requester* could flip their own
+  pending request to `accepted` and befriend someone who never agreed — which
+  would then have handed them read access to that person's likes. Accepting is
+  now permitted only for the party who didn't send the request.
+- **Squad member photos and locations are scoped to their owner.** One member
+  can no longer move another's pin or swap their photo (`onlyTouchesOwnKey`).
+  The same guard covers friendship profile snapshots, which is what stops one
+  side spoofing the other's push token.
+- **`firestore.rules.example` was rebased onto the live console ruleset.** The
+  repo's copy had drifted: it carried a squad member cap keyed on the
+  client-written `tier` field on the squad document, which a modified client
+  bypasses by simply claiming `pro`. The live rules derive it from the host's
+  server-pinned `consumerTier` instead. That drift is gone, and the file now
+  notes the console is authoritative.
+- New `storage.rules.example` — avatars are readable by any signed-in user,
+  writable only by their owner, capped at 5 MB and `image/*`.
+
+### Internal
+
+- New `Avatar` component and `avatarColor` util, replacing initials logic that
+  had been copy-pasted byte-for-byte between `ProfileScreen` and `SquadScreen`.
+- `Squad` gains `memberPhotos` / `memberLocations`; `ConsumerProfile` gains
+  `friendCode`, `socialDiscoveryEnabled`, `expoPushToken`. All denormalized for
+  the same reason `memberNames` already was — `users/{uid}` is owner-read-only.
+- `fetchDeckVenues` takes an optional district override and delegates to the
+  existing `fetchStubsForDistricts`, which already existed for squad decks. The
+  area picker needed no new fetch path.
+- `MainTabs`' icon selection was a four-deep nested ternary; now a lookup keyed
+  on route name, so the fifth tab was a one-line change.
+- New `FriendsContext` and `AreaSelectionContext`. Area selection is
+  **deliberately session-only** — a pin left on a district in another city
+  would silently poison the deck on next launch.
+- Likes live in one `userLikes/{uid}` document rather than being copied into
+  every friendship. The fan-out shape costs a write per friend per swipe, which
+  turns a 15-swipe session with 50 friends into 750 writes; this is one,
+  regardless of friend count.
+
+---
+
+### ⚠️ Requires a new native build
+
+`expo-notifications` and `expo-image-picker` are native modules and this
+project uses Expo CNG, so the existing dev client will not pick them up:
+
+```bash
+eas build --profile development --platform android   # dev
+eas build --profile production  --platform android   # store
+```
+
+### Deploy notes
+
+Four things must be done outside this repo, or features fail closed:
+
+1. **Enable Firebase Storage** (console → Storage → Get started). It is not
+   auto-provisioned like Firestore, and avatar uploads fail until it exists.
+2. **Publish the Storage rules** from `storage.rules.example`.
+3. **Publish the Firestore rules** — `friendCodes`, `friendships` and
+   `userLikes` are new, and every friends feature is permission-denied without
+   them. Deploy from the Creator webapp repo; a rules deploy **replaces** the
+   whole ruleset, so publish the complete file.
+4. **Configure Android FCM credentials** (`eas credentials`, or a
+   `googleServicesFile` in `app.json`). Neither is set today, and Android push
+   silently does nothing without it.
+
+No Cloud Function changes are required for this release.
+
+### Known limitations
+
+- **Match notifications are sent client-side** to Expo's push service, because
+  this repo has no deployable Cloud Functions of its own. A friend holding your
+  push token could in principle spam you — bounded, since tokens only ever
+  reach accepted friends and unfriending revokes access. The hardened form is a
+  Firestore-triggered sender in the Creator repo.
+- **Group matches are egocentric, not true cliques.** "You, Ben and Cara all
+  liked this" means Ben and Cara each matched with *you* — not that they're
+  friends with each other. Verifying that needs reading a friendship document
+  you aren't part of, which the rules correctly forbid.
+- **No area rating.** There is no rating, score or popularity field anywhere in
+  the data model, so the picker shows venue count and category mix instead.
+  A real rating would be net-new groundwork, not a display change.
+- **Location stops when you leave the Profile or Itinerary screen**, not just
+  when the app closes. A friend swiping in Discover isn't emitting updates, so
+  their pin can be stale while they're demonstrably online.
+- **Remote push does not work in Expo Go** (removed in SDK 53+). Testing needs
+  a dev or EAS build.
+- The friend-read permission check costs two document reads per friend, once
+  per session when the listener opens. Fine at current scale; worth revisiting
+  if anyone accumulates hundreds of friends.
+
+---
 
 ## v1.1.0 — 2026-07-30
 

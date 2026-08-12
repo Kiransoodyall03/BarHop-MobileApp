@@ -214,6 +214,10 @@ export interface ConsumerProfile {
   lastName?: string;
   displayName?: string;
   photoURL: string | null;
+  // Border catalog key of kind 'avatar' — the premium frame drawn around this
+  // user's profile picture. Absent (the common case) renders a plain avatar.
+  // Resolved live from borderCatalog/current, so new frames need no release.
+  avatarBorderStyle?: string;
   provider?: string;
   emailVerified?: boolean;
   accountType?: 'consumer';

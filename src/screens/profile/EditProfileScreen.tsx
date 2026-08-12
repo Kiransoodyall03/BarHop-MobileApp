@@ -22,6 +22,7 @@ import { useSquad } from '../../context/SquadContext';
 import { ageFromDob, updateProfile } from '../../services/profileService';
 import { uploadAvatar } from '../../services/avatarService';
 import { propagatePhotoToMySquads } from '../../services/squadService';
+import { describeFirebaseError } from '../../utils/firebaseErrors';
 import { useTheme, useThemedStyles } from '../../theme/ThemeContext';
 import type { ThemeColors } from '../../theme/colors';
 import {
@@ -110,7 +111,10 @@ export default function EditProfileScreen({ navigation }: Props) {
     } catch (error) {
       console.warn('[EditProfileScreen] avatar upload failed:', error);
       setAvatarUri(previousUri);
-      Alert.alert('Could not upload photo', 'Please check your connection and try again.');
+      Alert.alert(
+        'Could not upload photo',
+        describeFirebaseError(error, 'Please check your connection and try again.')
+      );
     } finally {
       setUploadingAvatar(false);
     }
@@ -133,7 +137,10 @@ export default function EditProfileScreen({ navigation }: Props) {
       navigation.goBack();
     } catch (error) {
       console.warn('[EditProfileScreen] save failed:', error);
-      Alert.alert('Could not save', 'Please check your connection and try again.');
+      Alert.alert(
+        'Could not save',
+        describeFirebaseError(error, 'Please check your connection and try again.')
+      );
     } finally {
       setSaving(false);
     }

@@ -3,7 +3,7 @@ import { AppState, type AppStateStatus } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { AuthProvider } from './src/context/AuthContext';
+import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { SquadProvider } from './src/context/SquadContext';
 import { FriendsProvider } from './src/context/FriendsContext';
 import { AreaSelectionProvider } from './src/context/AreaSelectionContext';
@@ -12,6 +12,7 @@ import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
 import { initializeAds } from './src/ads/adsModule';
 import { enforceAppUpdate } from './src/services/appUpdates';
 import { initSentry, sentryEnabled, Sentry } from './src/services/sentry';
+import { loadBorderCatalog } from './src/services/borderCatalogService';
 
 // Init crash reporting FIRST so a failure during any of the setup below is
 // still captured. No-op until a DSN is configured.
@@ -20,10 +21,27 @@ initSentry();
 // No-op in Expo Go; initializes the Google Mobile Ads SDK in dev/store builds.
 initializeAds();
 
+/**
+ * Pulls the premium border catalog once the user is signed in — the document
+ * requires an authenticated reader. Renders nothing; the store it fills is
+ * read by VenueCard and Avatar.
+ *
+ * This is what makes new frame art arrive without an app release: an admin
+ * publishes in the Border Studio, and the next launch picks it up.
+ */
+function BorderCatalogLoader() {
+  const { user } = useAuth();
+  useEffect(() => {
+    if (user) void loadBorderCatalog();
+  }, [user]);
+  return null;
+}
+
 function ThemedApp() {
   const { mode } = useTheme();
   return (
     <AuthProvider>
+      <BorderCatalogLoader />
       <SquadProvider>
         <FriendsProvider>
           <AreaSelectionProvider>

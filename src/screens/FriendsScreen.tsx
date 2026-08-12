@@ -18,6 +18,7 @@ import { useAuth } from '../context/AuthContext';
 import { useFriends } from '../context/FriendsContext';
 import { updateProfile } from '../services/profileService';
 import { clearSharedLikes } from '../services/friendService';
+import { describeFirebaseError } from '../utils/firebaseErrors';
 import { useTheme, useThemedStyles } from '../theme/ThemeContext';
 import type { ThemeColors } from '../theme/colors';
 import { friendUidOf, type FriendshipWithId } from '../types';
@@ -70,7 +71,10 @@ export default function FriendsScreen({ navigation }: Props) {
       await accept(pairId);
     } catch (error) {
       console.warn('[FriendsScreen] accept failed:', error);
-      Alert.alert('Could not accept', 'Check your connection and try again.');
+      Alert.alert(
+        'Could not accept',
+        describeFirebaseError(error, 'Check your connection and try again.')
+      );
     } finally {
       setBusyId(null);
     }
@@ -103,7 +107,10 @@ export default function FriendsScreen({ navigation }: Props) {
       if (!next) await clearSharedLikes(user.uid);
     } catch (error) {
       console.warn('[FriendsScreen] sharing toggle failed:', error);
-      Alert.alert('Could not update', 'Check your connection and try again.');
+      Alert.alert(
+        'Could not update',
+        describeFirebaseError(error, 'Check your connection and try again.')
+      );
     }
   }
 
